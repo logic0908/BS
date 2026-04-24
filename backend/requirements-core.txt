@@ -1,0 +1,21 @@
+fastapi>=0.109.0
+uvicorn>=0.27.0
+python-multipart>=0.0.9
+torch>=2.1.0
+torchaudio>=2.1.0
+numpy>=1.24,<3
+scipy>=1.10.0
+librosa>=0.10.1
+soundfile>=0.12.1
+demucs>=4.0.1
+pydantic>=2.6.0
+pydantic-settings>=2.1.0
+sentence-transformers>=2.3.1
+openai-whisper>=20231117
+praat-parselmouth>=0.4.3
+pypinyin>=0.50.0
+# NOTE:
+# `rmvpe` is not available as a stable PyPI package name in many environments.
+# This project vendors `xavriley/RMVPE` via `backend/scripts/setup_rmvpe.py`.
+# The setup script performs editable install when available and otherwise
+# falls back to the vendored import path under `backend/third_party/RMVPE`.

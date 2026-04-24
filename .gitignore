@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+.env
+env/
+__pycache__/
+node_modules/
+.cache/
+# Data & Models (不要上传大文件)
+backend/data/*
+!backend/data/.gitkeep
+*.pth
+*.pt
+*.onnx
+*.wav
+*.mp3
+*.flac
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# large model/data
+StyleSinger/data/
+StyleSinger/checkpoints/
+StyleSinger/infer_out/
+
+# model weights
+*.pth
+*.pt
+*.ckpt
+
+# audio outputs
+*.wav
+*.mp3
+
+# cache
+__pycache__/
+.ipynb_checkpoints/
+.codex
+
+# frontend/backend temp
+node_modules/
+
+# archives
+*.zip
+*.doc

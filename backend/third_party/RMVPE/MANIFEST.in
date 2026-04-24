@@ -1,0 +1,25 @@
+# Include important files
+include README.md
+include LICENSE
+include pyproject.toml
+
+# Include the rmvpe package
+recursive-include rmvpe *.py
+
+# Exclude training and development files
+exclude train.py
+exclude evaluate.py
+exclude get_model.sh
+exclude requirements.txt
+exclude infer.py
+
+# Exclude src directory (training code)
+prune src
+
+# Exclude common development and cache files
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude .DS_Store
+global-exclude *.egg-info
+

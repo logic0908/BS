@@ -1,0 +1,7 @@
+{
+  "name": "VocalMorph Web",
+  "description": "A text-prompted singing voice style conversion system using AI to transform vocal timbres based on natural language descriptions.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
