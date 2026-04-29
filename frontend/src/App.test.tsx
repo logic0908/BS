@@ -148,6 +148,7 @@ describe('App demo UI', () => {
 
     expect(screen.getByText('基于文本提示词控制的歌声风格转换系统')).toBeInTheDocument()
     expect(screen.getByText('SVC 主链路')).toBeInTheDocument()
+    expect(screen.queryByText('毕业设计演示系统')).not.toBeInTheDocument()
   })
 
   it('未输入 prompt 时开始转换按钮禁用', async () => {
@@ -250,6 +251,37 @@ describe('App demo UI', () => {
         engine: 'sovits',
       }),
     )
+    expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/v1/tasks', expect.anything())
+  })
+
+  it('上传后干声 checkbox 仍可交互并提示重新上传后生效', async () => {
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url === '/api/v1/upload') {
+        return { data: { vocals_id: 'vocals-1', is_vocal_only: false } }
+      }
+      throw new Error(`Unexpected POST ${String(url)}`)
+    })
+
+    await act(async () => {
+      root.render(<App />)
+      await flush()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByText('Mock Upload'))
+      await flush()
+    })
+
+    const checkbox = screen.getByLabelText('输入已是纯人声/干声，跳过人声分离') as HTMLInputElement
+    expect(checkbox).not.toBeDisabled()
+    expect(checkbox.checked).toBe(false)
+
+    await act(async () => {
+      fireEvent.click(checkbox)
+      await flush()
+    })
+
+    expect(checkbox.checked).toBe(true)
+    expect(screen.getByText('更改该选项将在重新上传或重新预处理后生效。')).toBeInTheDocument()
   })
 
   it('mock 模式显示 Mock SVC 提示', async () => {
@@ -335,8 +367,16 @@ describe('App demo UI', () => {
               inference_mode: 'real',
               mock_enabled: false,
               speaker: 'villager',
-              model_path: '/models/minecraft_villager/G_4000.pth',
-              config_path: '/models/minecraft_villager/config.json',
+              model_preset_id: 'final_primary',
+              model_display_name: '最终演示 So-VITS-SVC 模型',
+              source_repo: 'SuCicada/Lain-so-vits-svc-4.1',
+              license: 'gpl',
+              model_path: '/models/final_primary/G_2400_infer.pth',
+              config_path: '/models/final_primary/config.json',
+              model_path_basename: 'G_2400_infer.pth',
+              config_path_basename: 'config.json',
+              is_demo_quality: true,
+              is_technical_validation_only: false,
               selected_output: '/repo/results/test.wav_0key_villager_sovits_pm.flac',
               final_output_path: '/tmp/converted.wav',
               return_code: 0,
@@ -356,11 +396,7 @@ describe('App demo UI', () => {
       if (url === '/api/v1/tasks/task-real/result') {
         return {
           data: new Blob(['wav']),
-          headers: {
-            'x-svc-inference-mode': 'real',
-            'x-svc-model-path': '/models/minecraft_villager/G_4000.pth',
-            'x-svc-speaker': 'villager',
-          },
+          headers: {},
         }
       }
       throw new Error(`Unexpected GET ${String(url)}`)
@@ -386,8 +422,13 @@ describe('App demo UI', () => {
     await waitFor(() => {
       expect(screen.getAllByText('真实 So-VITS-SVC').length).toBeGreaterThan(0)
     })
+    expect(mockedAxios.get).toHaveBeenCalledWith('/api/v1/tasks/task-real/result', { responseType: 'blob' })
     expect(screen.getByText('villager')).toBeInTheDocument()
-    expect(screen.getByText('G_4000.pth')).toBeInTheDocument()
+    expect(screen.getByText('final_primary')).toBeInTheDocument()
+    expect(screen.getByText('G_2400_infer.pth')).toBeInTheDocument()
+    expect(screen.getByText('SuCicada/Lain-so-vits-svc-4.1')).toBeInTheDocument()
+    expect(screen.getByText('gpl')).toBeInTheDocument()
+    expect(screen.getByText('当前使用最终演示 SVC 模型。')).toBeInTheDocument()
     expect(screen.getByText('是')).toBeInTheDocument()
   })
 
@@ -426,6 +467,8 @@ describe('App demo UI', () => {
             },
             selected_style: {
               style_id: 'lyrical_soft',
+              model_preset_id: 'final_primary',
+              model_display_name: '最终演示 So-VITS-SVC 模型',
               description: '抒情、温柔、细腻、治愈',
               match_score: 77,
               matched_keywords: ['温柔', '抒情'],
@@ -462,6 +505,8 @@ describe('App demo UI', () => {
       expect(screen.getByText('风格匹配信息')).toBeInTheDocument()
     })
     expect(screen.getAllByText(/lyrical_soft/).length).toBeGreaterThan(0)
+    expect(screen.getByText('final_primary')).toBeInTheDocument()
+    expect(screen.getByText('最终演示 So-VITS-SVC 模型')).toBeInTheDocument()
     expect(screen.getByText(/抒情、温柔、细腻、治愈/)).toBeInTheDocument()
     expect(screen.getByText(/命中关键词：温柔、抒情；选择 lyrical_soft/)).toBeInTheDocument()
   })

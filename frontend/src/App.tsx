@@ -1,7 +1,7 @@
 import { Component, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import axios from 'axios'
-import { ChevronDown, Download, ShieldCheck, Sparkles } from 'lucide-react'
+import { ChevronDown, Download, ShieldCheck } from 'lucide-react'
 
 import './App.css'
 import { AppStatus } from './types'
@@ -33,12 +33,19 @@ type TaskResponse = {
   return_code?: number | null
   elapsed_seconds?: number | null
   sovits_command_debug_path?: string | null
+  model_preset_id?: string | null
+  model_display_name?: string | null
+  source_repo?: string | null
+  license?: string | null
+  model_path_basename?: string | null
+  config_path_basename?: string | null
+  is_demo_quality?: boolean | null
+  is_technical_validation_only?: boolean | null
 }
 
 type ResultFetchPayload = {
   blob: Blob
   taskData: TaskResponse
-  headers: Record<string, string>
 }
 
 type DebugArtifacts = {
@@ -80,6 +87,7 @@ function App() {
   const [promptText, setPromptText] = useState('')
   const [styleStrength, setStyleStrength] = useState(0.65)
   const [isVocalOnly, setIsVocalOnly] = useState(false)
+  const [uploadedVocalOnly, setUploadedVocalOnly] = useState<boolean | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [systemPanelOpen, setSystemPanelOpen] = useState(false)
   const [debugPanelOpen, setDebugPanelOpen] = useState(false)
@@ -113,7 +121,7 @@ function App() {
   const taskProgress = Math.max(0, Math.min(100, Number(taskSnapshot?.progress ?? 0)))
   const promptConflict = useMemo(() => detectPromptConflict(promptText), [promptText])
   const currentResultMetadata = useMemo(
-    () => result?.metadata ?? normalizeResultMetadata(taskSnapshot, undefined),
+    () => result?.metadata ?? normalizeResultMetadata(taskSnapshot),
     [result?.metadata, taskSnapshot],
   )
 
@@ -161,6 +169,7 @@ function App() {
     })
     setResult(null)
     setVocalsId(null)
+    setUploadedVocalOnly(null)
     setVocalsPreviewUrl(null)
     setTaskSnapshot(null)
     setSelectedStyle(null)
@@ -176,6 +185,7 @@ function App() {
       formData.append('is_vocal_only', String(isVocalOnly))
       const response = await axios.post('/api/v1/upload', formData)
       setVocalsId(response.data?.vocals_id ?? null)
+      setUploadedVocalOnly(Boolean(response.data?.is_vocal_only))
       setVocalsPreviewUrl(typeof response.data?.vocals_url === 'string' ? response.data.vocals_url : null)
       setTaskStatusMsg('音频上传完成，可以开始 SVC 转换。')
       setStatus(AppStatus.READY_TO_CONVERT)
@@ -198,7 +208,6 @@ function App() {
         return {
           blob: resultResponse.data as Blob,
           taskData: data,
-          headers: normalizeHeaders(resultResponse.headers),
         }
       }
       if (data.status === 'failed') {
@@ -224,7 +233,7 @@ function App() {
     setResult({
       originalUrl,
       convertedUrl,
-      metadata: normalizeResultMetadata(payload.taskData, payload.headers),
+      metadata: normalizeResultMetadata(payload.taskData),
     })
     setStatus(AppStatus.COMPLETED)
     setTaskStatusMsg('转换完成')
@@ -373,6 +382,7 @@ function App() {
     setStatus(AppStatus.IDLE)
     setInputAudio(null)
     setVocalsId(null)
+    setUploadedVocalOnly(null)
     setVocalsPreviewUrl(null)
     setTaskStatusMsg(null)
     setErrorMsg(null)
@@ -387,10 +397,6 @@ function App() {
         <main className="app-container">
           <section className="hero-card">
             <div className="hero-copy">
-              <div className="hero-kicker">
-                <Sparkles className="hero-kicker-icon" />
-                <span>毕业设计演示系统</span>
-              </div>
               <h1>基于文本提示词控制的歌声风格转换系统</h1>
               <p>
                 上传一段人声或歌曲片段，输入目标风格描述，系统将尽量保留原唱内容与旋律，并转换音色与演唱风格。
@@ -452,11 +458,13 @@ function App() {
                         <input
                           type="checkbox"
                           checked={isVocalOnly}
-                          disabled={Boolean(inputAudio)}
                           onChange={(event) => setIsVocalOnly(event.target.checked)}
                         />
                         <span>输入已是纯人声/干声，跳过人声分离</span>
                       </label>
+                      {vocalsId && uploadedVocalOnly !== null && uploadedVocalOnly !== isVocalOnly && (
+                        <div className="inline-hint warning-text">更改该选项将在重新上传或重新预处理后生效。</div>
+                      )}
                       <AudioWorkbenchCard
                         title="原始音频"
                         subtitle={vocalsId ? `vocals_id: ${vocalsId}` : '等待预处理完成'}
@@ -544,16 +552,36 @@ function App() {
                   {currentResultMetadata?.inference_mode && (
                     <div className="selected-style-grid result-meta-grid">
                       <MetaItem
+                        label="当前模型 preset"
+                        value={String(currentResultMetadata.model_preset_id ?? 'n/a')}
+                      />
+                      <MetaItem
+                        label="模型显示名"
+                        value={String(currentResultMetadata.model_display_name ?? 'n/a')}
+                      />
+                      <MetaItem
                         label="推理模式"
                         value={currentResultMetadata.inference_mode === 'real' ? '真实 So-VITS-SVC' : 'Mock SVC'}
                       />
                       <MetaItem label="目标 speaker" value={String(currentResultMetadata.speaker ?? 'n/a')} />
-                      <MetaItem label="模型" value={basenamePath(String(currentResultMetadata.model_path ?? 'n/a'))} />
+                      <MetaItem
+                        label="模型 basename"
+                        value={String(currentResultMetadata.model_path_basename ?? basenamePath(String(currentResultMetadata.model_path ?? 'n/a')))}
+                      />
+                      <MetaItem label="source repo" value={String(currentResultMetadata.source_repo ?? 'n/a')} />
+                      <MetaItem label="license" value={String(currentResultMetadata.license ?? 'n/a')} />
+                      <MetaItem label="demo quality" value={formatBool(currentResultMetadata.is_demo_quality)} />
                       <MetaItem
                         label="真实调用 inference_main.py"
                         value={currentResultMetadata.called_inference_main ? '是' : '否'}
                       />
                     </div>
+                  )}
+                  {currentResultMetadata?.model_preset_id === 'final_primary' && (
+                    <Notice tone="success">当前使用最终演示 SVC 模型。</Notice>
+                  )}
+                  {currentResultMetadata?.model_preset_id === 'tech_villager' && (
+                    <Notice tone="warning">当前使用技术验收模型。</Notice>
                   )}
 
                   <div className="progress-bar-track">
@@ -623,6 +651,8 @@ function App() {
                         </div>
                       )}
                       <MetaItem label="style_id" value={String(selectedStyle.style_id ?? 'n/a')} />
+                      <MetaItem label="model_preset_id" value={String(selectedStyle.model_preset_id ?? 'n/a')} />
+                      <MetaItem label="model_display_name" value={String(selectedStyle.model_display_name ?? 'n/a')} />
                       <MetaItem label="description" value={String(selectedStyle.description ?? 'n/a')} />
                       <MetaItem label="match_score" value={String(selectedStyle.match_score ?? 'n/a')} />
                       <MetaItem label="matched_keywords" value={formatMatchedKeywords(selectedStyle.matched_keywords)} />
@@ -841,37 +871,32 @@ function Notice({ tone, children }: { tone: 'success' | 'warning' | 'error'; chi
   return <div className={`notice notice-${tone}`}>{children}</div>
 }
 
-function normalizeHeaders(headers: unknown): Record<string, string> {
-  if (!headers || typeof headers !== 'object') {
-    return {}
-  }
-  return Object.fromEntries(
-    Object.entries(headers as Record<string, unknown>).map(([key, value]) => [key.toLowerCase(), String(value)]),
-  )
-}
-
-function normalizeResultMetadata(
-  taskData?: TaskResponse | null,
-  headers?: Record<string, string>,
-): ProcessingResult['metadata'] {
+function normalizeResultMetadata(taskData?: TaskResponse | null): ProcessingResult['metadata'] {
   const taskMeta = (taskData?.result_metadata ?? taskData?.engine_details ?? {}) as Record<string, unknown>
-  const headerValue = (name: string) => headers?.[name.toLowerCase()]
-  const inferenceModeRaw = taskMeta.inference_mode ?? taskData?.inference_mode ?? headerValue('x-svc-inference-mode')
+  const inferenceModeRaw = taskMeta.inference_mode ?? taskData?.inference_mode
   const inferenceMode = typeof inferenceModeRaw === 'string' && inferenceModeRaw.trim() ? inferenceModeRaw : null
   return {
     inference_mode: inferenceMode,
-    mock_enabled: coerceBoolean(taskMeta.mock_enabled ?? taskData?.mock_enabled ?? headerValue('x-svc-mock-enabled')),
-    model_path: stringOrNull(taskMeta.model_path ?? taskData?.model_path ?? headerValue('x-svc-model-path')),
-    config_path: stringOrNull(taskMeta.config_path ?? taskData?.config_path ?? headerValue('x-svc-config-path')),
-    speaker: stringOrNull(taskMeta.speaker ?? taskData?.speaker ?? headerValue('x-svc-speaker')),
-    device: stringOrNull(taskMeta.device ?? taskData?.device ?? headerValue('x-svc-device')),
-    selected_output: stringOrNull(taskMeta.selected_output ?? taskData?.selected_output ?? headerValue('x-svc-selected-output')),
-    final_output_path: stringOrNull(taskMeta.final_output_path ?? taskData?.final_output_path ?? headerValue('x-svc-final-output-path')),
-    return_code: coerceNumber(taskMeta.return_code ?? taskData?.return_code ?? headerValue('x-svc-return-code')),
-    elapsed_seconds: coerceNumber(taskMeta.elapsed_seconds ?? taskData?.elapsed_seconds ?? headerValue('x-svc-elapsed-seconds')),
-    sovits_command_debug_path: stringOrNull(
-      taskMeta.sovits_command_debug_path ?? taskData?.sovits_command_debug_path ?? headerValue('x-svc-command-debug-path'),
+    mock_enabled: coerceBoolean(taskMeta.mock_enabled ?? taskData?.mock_enabled),
+    model_path: stringOrNull(taskMeta.model_path ?? taskData?.model_path),
+    config_path: stringOrNull(taskMeta.config_path ?? taskData?.config_path),
+    model_preset_id: stringOrNull(taskMeta.model_preset_id ?? taskData?.model_preset_id),
+    model_display_name: stringOrNull(taskMeta.model_display_name ?? taskData?.model_display_name),
+    source_repo: stringOrNull(taskMeta.source_repo ?? taskData?.source_repo),
+    license: stringOrNull(taskMeta.license ?? taskData?.license),
+    model_path_basename: stringOrNull(taskMeta.model_path_basename ?? taskData?.model_path_basename),
+    config_path_basename: stringOrNull(taskMeta.config_path_basename ?? taskData?.config_path_basename),
+    is_demo_quality: coerceBoolean(taskMeta.is_demo_quality ?? taskData?.is_demo_quality),
+    is_technical_validation_only: coerceBoolean(
+      taskMeta.is_technical_validation_only ?? taskData?.is_technical_validation_only,
     ),
+    speaker: stringOrNull(taskMeta.speaker ?? taskData?.speaker),
+    device: stringOrNull(taskMeta.device ?? taskData?.device),
+    selected_output: stringOrNull(taskMeta.selected_output ?? taskData?.selected_output),
+    final_output_path: stringOrNull(taskMeta.final_output_path ?? taskData?.final_output_path),
+    return_code: coerceNumber(taskMeta.return_code ?? taskData?.return_code),
+    elapsed_seconds: coerceNumber(taskMeta.elapsed_seconds ?? taskData?.elapsed_seconds),
+    sovits_command_debug_path: stringOrNull(taskMeta.sovits_command_debug_path ?? taskData?.sovits_command_debug_path),
     called_inference_main:
       inferenceMode === 'real' ? true : inferenceMode === 'mock' ? false : coerceBoolean(taskMeta.called_inference_main),
   }

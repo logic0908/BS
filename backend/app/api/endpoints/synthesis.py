@@ -33,6 +33,7 @@ class ConvertRequest(BaseModel):
     prompt_text: str
     style_strength: float = 0.6
     style_preset_id: str | None = None
+    model_preset_id: str | None = None
     engine: str = "sovits"
 
 
@@ -46,6 +47,16 @@ def _save_upload_file(upload: UploadFile, task_id: str, prefix: str = "input") -
 
 def _task_output_path(task_id: str) -> str:
     return os.path.join(OUTPUT_DIR, f"{task_id}_out.wav")
+
+
+def _ascii_header_value(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).encode("ascii", errors="ignore").decode("ascii")
+
+
+def _safe_result_filename(task_id: str) -> str:
+    return f"converted_{task_id}.wav"
 
 
 def _parse_float_list(raw: str | None) -> list[float] | None:
@@ -149,6 +160,14 @@ def _normalize_svc_task_payload(task_id: str, task) -> dict:
         "model_path": result_metadata.get("model_path"),
         "config_path": result_metadata.get("config_path"),
         "speaker": result_metadata.get("speaker"),
+        "model_preset_id": result_metadata.get("model_preset_id"),
+        "model_display_name": result_metadata.get("model_display_name"),
+        "source_repo": result_metadata.get("source_repo"),
+        "license": result_metadata.get("license"),
+        "model_path_basename": result_metadata.get("model_path_basename"),
+        "config_path_basename": result_metadata.get("config_path_basename"),
+        "is_demo_quality": result_metadata.get("is_demo_quality"),
+        "is_technical_validation_only": result_metadata.get("is_technical_validation_only"),
         "device": result_metadata.get("device"),
         "selected_output": result_metadata.get("selected_output"),
         "final_output_path": result_metadata.get("final_output_path"),
@@ -268,6 +287,7 @@ async def convert_audio(
         prompt_text=request.prompt_text,
         style_strength=request.style_strength,
         style_preset_id=request.style_preset_id,
+        model_preset_id=request.model_preset_id,
     )
     return {
         "task_id": task_id,
@@ -559,22 +579,15 @@ async def get_task_result(task_id: str):
             raise HTTPException(status_code=409, detail="task not completed")
         metadata = dict(task.engine_details or {})
         headers = {
-            "X-SVC-Inference-Mode": str(metadata.get("inference_mode") or task.inference_mode or ""),
-            "X-SVC-Mock-Enabled": str(metadata.get("mock_enabled") if metadata.get("mock_enabled") is not None else ""),
-            "X-SVC-Model-Path": str(metadata.get("model_path") or ""),
-            "X-SVC-Config-Path": str(metadata.get("config_path") or ""),
-            "X-SVC-Speaker": str(metadata.get("speaker") or ""),
-            "X-SVC-Device": str(metadata.get("device") or ""),
-            "X-SVC-Selected-Output": str(metadata.get("selected_output") or ""),
-            "X-SVC-Final-Output-Path": str(metadata.get("final_output_path") or task.output_path or ""),
-            "X-SVC-Return-Code": str(metadata.get("return_code") if metadata.get("return_code") is not None else ""),
-            "X-SVC-Elapsed-Seconds": str(metadata.get("elapsed_seconds") if metadata.get("elapsed_seconds") is not None else ""),
-            "X-SVC-Command-Debug-Path": str(metadata.get("sovits_command_debug_path") or ""),
+            "X-Task-Id": _ascii_header_value(task_id),
+            "X-Inference-Mode": _ascii_header_value(metadata.get("inference_mode") or task.inference_mode or ""),
+            "X-Model-Preset-Id": _ascii_header_value(metadata.get("model_preset_id") or ""),
+            "X-Speaker": _ascii_header_value(metadata.get("speaker") or ""),
         }
         return FileResponse(
             task.output_path,
             media_type="audio/wav",
-            filename=os.path.basename(task.output_path),
+            filename=_safe_result_filename(task_id),
             headers=headers,
         )
 
@@ -586,4 +599,4 @@ async def get_task_result(task_id: str):
         raise HTTPException(status_code=409, detail=detail)
     if task.status != "completed" or not task.output_path or not os.path.exists(task.output_path):
         raise HTTPException(status_code=409, detail="task not completed")
-    return FileResponse(task.output_path, media_type="audio/wav", filename=os.path.basename(task.output_path))
+    return FileResponse(task.output_path, media_type="audio/wav", filename=_safe_result_filename(task_id))

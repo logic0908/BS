@@ -14,6 +14,7 @@ from app.api.endpoints import synthesis as synthesis_endpoint
 from app.api.endpoints.synthesis import ConvertRequest
 from app.models_svc.sovits_wrapper import SoVitsSvcEngine, SoVitsSvcError
 from app.services import style_library
+from app.services import svc_model_presets
 import app.services.svc_task_service as svc_task_service_module
 from app.services.svc_task_service import TaskState, UploadRecord, svc_task_service
 from app.models_svc.stylesinger_wrapper import stylesinger_service
@@ -58,6 +59,46 @@ def _prepare_valid_sovits_assets(files: dict[str, Path], speaker: str = "village
                 "data": {"sampling_rate": 44100},
                 "model": {"speech_encoder": "vec768l12"},
                 "spk": {speaker: 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_preset_config(path: Path, final_model: Path, final_config: Path, tech_model: Path, tech_config: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "active_preset_id": "final_primary",
+                "fallback_preset_id": "tech_villager",
+                "presets": [
+                    {
+                        "preset_id": "final_primary",
+                        "display_name": "最终演示 So-VITS-SVC 模型",
+                        "description": "用于毕业设计默认演示的目标歌声转换模型。",
+                        "model_path": str(final_model),
+                        "config_path": str(final_config),
+                        "speaker": "final_spk",
+                        "device": "cuda",
+                        "is_demo_quality": True,
+                        "is_technical_validation_only": False,
+                        "source_repo": "owner/final",
+                        "license": "mit",
+                    },
+                    {
+                        "preset_id": "tech_villager",
+                        "display_name": "技术验收模型：Minecraft Villager",
+                        "description": "仅用于验证真实 So-VITS-SVC CUDA 推理链路。",
+                        "model_path": str(tech_model),
+                        "config_path": str(tech_config),
+                        "speaker": "villager",
+                        "device": "cuda",
+                        "is_demo_quality": False,
+                        "is_technical_validation_only": True,
+                        "source_repo": "owner/tech",
+                        "license": "cc-by-nc-sa-4.0",
+                    },
+                ],
             }
         ),
         encoding="utf-8",
@@ -111,6 +152,7 @@ def test_sovits_real_mode_repo_not_found_returns_structured_error(tmp_path, monk
 
 def test_sovits_real_mode_model_not_found_returns_structured_error(tmp_path, monkeypatch):
     files = _prepare_runtime_files(tmp_path)
+    monkeypatch.setenv("SVC_DISABLE_MODEL_PRESETS", "true")
     monkeypatch.setenv("SOVITS_MOCK", "false")
     monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))
     monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(files["script_path"]))
@@ -134,6 +176,7 @@ def test_sovits_real_mode_model_not_found_returns_structured_error(tmp_path, mon
 def test_sovits_real_mode_speaker_not_in_config_returns_structured_error(tmp_path, monkeypatch):
     files = _prepare_runtime_files(tmp_path)
     _prepare_valid_sovits_assets(files, speaker="villager")
+    monkeypatch.setenv("SVC_DISABLE_MODEL_PRESETS", "true")
     monkeypatch.setenv("SOVITS_MOCK", "false")
     monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))
     monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(files["script_path"]))
@@ -190,6 +233,7 @@ def test_sovits_real_mode_missing_contentvec_returns_structured_error(tmp_path, 
 def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, monkeypatch):
     files = _prepare_runtime_files(tmp_path)
     _prepare_valid_sovits_assets(files, speaker="villager")
+    monkeypatch.setenv("SVC_DISABLE_MODEL_PRESETS", "true")
     monkeypatch.setenv("SOVITS_MOCK", "false")
     monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))
     monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(files["script_path"]))
@@ -246,6 +290,53 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
     assert command_log["audio_prepare_method"] == "soundfile_reencode_wav"
     assert command_log["selected_output"].endswith(".flac")
     assert command_log["final_output_path"] == str(files["output_path"])
+
+
+def test_active_preset_is_used_before_legacy_sovits_env(tmp_path, monkeypatch):
+    files = _prepare_runtime_files(tmp_path)
+    final_model = tmp_path / "final.pth"
+    final_model.write_text("final", encoding="utf-8")
+    final_config = tmp_path / "final_config.json"
+    final_config.write_text(
+        json.dumps({"data": {"sampling_rate": 44100}, "model": {"speech_encoder": "hubertsoft"}, "spk": {"final_spk": 0}}),
+        encoding="utf-8",
+    )
+    preset_path = tmp_path / "svc_model_presets.json"
+    _write_preset_config(preset_path, final_model, final_config, files["model_path"], files["config_path"])
+    monkeypatch.setattr(svc_model_presets, "PRESETS_PATH", preset_path)
+    monkeypatch.setenv("SOVITS_MODEL_PATH", str(files["model_path"]))
+    monkeypatch.setenv("SOVITS_CONFIG_PATH", str(files["config_path"]))
+    monkeypatch.setenv("SOVITS_SPEAKER", "villager")
+
+    runtime_config = SoVitsSvcEngine().resolve_runtime_config({})
+
+    assert runtime_config.model_path == str(final_model)
+    assert runtime_config.config_path == str(final_config)
+    assert runtime_config.speaker == "final_spk"
+    assert runtime_config.model_preset_id == "final_primary"
+    assert runtime_config.source_repo == "owner/final"
+
+
+def test_explicit_model_preset_id_can_select_tech_fallback(tmp_path, monkeypatch):
+    files = _prepare_runtime_files(tmp_path)
+    final_model = tmp_path / "final.pth"
+    final_model.write_text("final", encoding="utf-8")
+    final_config = tmp_path / "final_config.json"
+    final_config.write_text(
+        json.dumps({"data": {"sampling_rate": 44100}, "model": {"speech_encoder": "hubertsoft"}, "spk": {"final_spk": 0}}),
+        encoding="utf-8",
+    )
+    preset_path = tmp_path / "svc_model_presets.json"
+    _write_preset_config(preset_path, final_model, final_config, files["model_path"], files["config_path"])
+    monkeypatch.setattr(svc_model_presets, "PRESETS_PATH", preset_path)
+
+    runtime_config = SoVitsSvcEngine().resolve_runtime_config({"model_preset_id": "tech_villager"})
+
+    assert runtime_config.model_path == str(files["model_path"])
+    assert runtime_config.config_path == str(files["config_path"])
+    assert runtime_config.speaker == "villager"
+    assert runtime_config.model_preset_id == "tech_villager"
+    assert runtime_config.is_technical_validation_only is True
 
 
 def test_sovits_real_mode_raises_output_not_found_when_results_have_no_new_file(mocker, tmp_path, monkeypatch):
@@ -475,7 +566,7 @@ def test_prompt_text_is_passed_to_style_library_and_selected_style_written_to_de
         style_preset_id="pop_bright",
     )
 
-    retrieve_mock.assert_called_once_with("明亮流行", style_preset_id="pop_bright")
+    retrieve_mock.assert_called_once_with("明亮流行", style_preset_id="pop_bright", model_preset_id=None)
     assert convert_mock.call_args.kwargs["style_preset"]["style_id"] == "pop_bright"
     debug_payload = json.loads((runtime_dir / "task-1" / "selected_style.json").read_text(encoding="utf-8"))
     assert debug_payload["style_id"] == "pop_bright"
@@ -524,7 +615,7 @@ def test_system_health_returns_ok(mocker):
     assert data["app_status"] == "ok"
 
 
-def test_task_result_response_includes_sovits_metadata_headers(tmp_path):
+def test_task_result_response_uses_ascii_safe_headers_and_filename(tmp_path):
     output_path = tmp_path / "converted.wav"
     _write_wav(output_path)
     svc_task_service._tasks.clear()
@@ -539,6 +630,8 @@ def test_task_result_response_includes_sovits_metadata_headers(tmp_path):
         engine_details={
             "inference_mode": "real",
             "mock_enabled": False,
+            "model_preset_id": "final_primary",
+            "model_display_name": "最终演示 So-VITS-SVC 模型",
             "model_path": "/models/villager/G_4000.pth",
             "config_path": "/models/villager/config.json",
             "speaker": "villager",
@@ -553,12 +646,55 @@ def test_task_result_response_includes_sovits_metadata_headers(tmp_path):
 
     response = asyncio.run(synthesis_endpoint.get_task_result("task-result"))
 
-    assert response.headers["x-svc-inference-mode"] == "real"
-    assert response.headers["x-svc-speaker"] == "villager"
-    assert response.headers["x-svc-selected-output"] == "/repo/results/test.flac"
+    assert response.headers["x-task-id"] == "task-result"
+    assert response.headers["x-inference-mode"] == "real"
+    assert response.headers["x-model-preset-id"] == "final_primary"
+    assert response.headers["x-speaker"] == "villager"
+    assert response.headers["content-disposition"] == 'attachment; filename="converted_task-result.wav"'
+    assert "x-svc-model-display-name" not in response.headers
+    assert "x-svc-selected-output" not in response.headers
+    for header_value in response.headers.values():
+        header_value.encode("latin-1")
+
+
+def test_task_result_keeps_chinese_metadata_in_json_but_not_headers(tmp_path):
+    output_path = tmp_path / "converted.wav"
+    _write_wav(output_path)
+    svc_task_service._tasks.clear()
+    svc_task_service._tasks["task-cn"] = TaskState(
+        task_id="task-cn",
+        status="succeeded",
+        message="转换完成",
+        engine="sovits",
+        vocals_id="vocals-1",
+        output_path=str(output_path),
+        inference_mode="real",
+        selected_style={
+            "style_id": "female_pop_bright",
+            "description": "清亮、女声、流行",
+            "reason": "命中关键词：清亮、女声；选择 final_primary",
+        },
+        engine_details={
+            "inference_mode": "real",
+            "model_preset_id": "final_primary",
+            "model_display_name": "最终演示 So-VITS-SVC 模型",
+            "speaker": "lain",
+        },
+    )
+
+    response = asyncio.run(synthesis_endpoint.get_task_result("task-cn"))
+    task_payload = asyncio.run(synthesis_endpoint.get_task_status("task-cn"))
+
+    assert response.headers["content-disposition"] == 'attachment; filename="converted_task-cn.wav"'
+    for header_value in response.headers.values():
+        header_value.encode("latin-1")
+    assert task_payload["model_display_name"] == "最终演示 So-VITS-SVC 模型"
+    assert task_payload["selected_style"]["description"] == "清亮、女声、流行"
+    assert task_payload["selected_style"]["reason"] == "命中关键词：清亮、女声；选择 final_primary"
 
 
 def test_system_sovits_check_handles_missing_paths_without_500(monkeypatch):
+    monkeypatch.setenv("SVC_DISABLE_MODEL_PRESETS", "true")
     monkeypatch.setenv("SOVITS_MOCK", "false")
     monkeypatch.setenv("SOVITS_REPO_DIR", "/tmp/missing-sovits-repo")
     monkeypatch.setenv("SOVITS_INFER_SCRIPT", "/tmp/missing-sovits-repo/inference_main.py")
@@ -602,6 +738,7 @@ def test_system_sovits_check_reports_asset_validation_errors(monkeypatch, tmp_pa
         ),
         encoding="utf-8",
     )
+    monkeypatch.setenv("SVC_DISABLE_MODEL_PRESETS", "true")
     monkeypatch.setenv("SOVITS_MOCK", "false")
     monkeypatch.setenv("SOVITS_REPO_DIR", str(repo_dir))
     monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(infer_script))
