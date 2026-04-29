@@ -12,6 +12,7 @@ from typing import Any
 
 from app.models_svc.sovits_assets import inspect_sovits_assets
 from app.models_svc.sovits_wrapper import SoVitsSvcEngine
+from app.services.svc_model_presets import collect_presets_status
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
@@ -122,6 +123,7 @@ def collect_app_health() -> dict[str, Any]:
         "python_version": sys.version,
         "conda_env": os.environ.get("CONDA_DEFAULT_ENV", ""),
         "mock_mode": runtime_config.mock_enabled,
+        "svc_model_presets": collect_presets_status(),
         "frontend_build_info": _frontend_build_info(),
         "timestamp": _iso_timestamp(),
     }
@@ -157,6 +159,15 @@ def collect_sovits_check() -> dict[str, Any]:
         "SOVITS_CONFIG_PATH": runtime_config.config_path,
         "SOVITS_CONFIG_PATH_exists": Path(runtime_config.config_path).exists() if runtime_config.config_path else False,
         "SOVITS_SPEAKER": runtime_config.speaker,
+        "model_preset_id": runtime_config.model_preset_id,
+        "model_display_name": runtime_config.model_display_name,
+        "source_repo": runtime_config.source_repo,
+        "license": runtime_config.license,
+        "model_path_basename": runtime_config.model_path_basename,
+        "config_path_basename": runtime_config.config_path_basename,
+        "is_demo_quality": runtime_config.is_demo_quality,
+        "is_technical_validation_only": runtime_config.is_technical_validation_only,
+        "svc_model_presets": collect_presets_status(),
         "config_speakers": asset_report["config_summary"]["speakers"],
         "config_sampling_rate": asset_report["config_summary"]["sampling_rate"],
         "config_speech_encoder": asset_report["config_summary"]["speech_encoder"],

@@ -1,38 +1,30 @@
 [
   {
-    "style_id": "pop_bright",
-    "description": "流行、明亮、清澈、少年感",
-    "keywords": ["流行", "明亮", "清澈", "清亮", "clear", "少年", "少年感", "pop", "bright"],
-    "model_path": "",
-    "config_path": "",
-    "speaker": "",
+    "style_id": "male_youth_thick",
+    "description": "少年感、男声、厚重",
+    "keywords": ["少年感", "少年", "男声", "厚重", "低沉", "powerful", "thick", "deep", "male"],
+    "model_preset_id": "final_primary",
+    "transpose": 0
+  },
+  {
+    "style_id": "female_pop_bright",
+    "description": "清亮、女声、流行",
+    "keywords": ["清亮", "清澈", "明亮", "女声", "流行", "female", "pop", "bright"],
+    "model_preset_id": "final_primary",
     "transpose": 0
   },
   {
     "style_id": "lyrical_soft",
     "description": "抒情、温柔、细腻、治愈",
     "keywords": ["抒情", "温柔", "细腻", "治愈", "soft", "ballad"],
-    "model_path": "",
-    "config_path": "",
-    "speaker": "",
+    "model_preset_id": "final_primary",
     "transpose": 0
   },
   {
-    "style_id": "rock_power",
-    "description": "摇滚、力量感、爆发、颗粒感",
-    "keywords": ["摇滚", "力量", "爆发", "颗粒", "厚重", "powerful", "thick", "deep", "rock"],
-    "model_path": "",
-    "config_path": "",
-    "speaker": "",
-    "transpose": 0
-  },
-  {
-    "style_id": "female_soft",
-    "description": "女声、柔和、清晰、轻盈",
-    "keywords": ["女声", "female", "柔和", "轻盈", "清晰", "soft female"],
-    "model_path": "",
-    "config_path": "",
-    "speaker": "",
+    "style_id": "tech_villager_validation",
+    "description": "技术验收 / 测试推理专用 Minecraft Villager",
+    "keywords": ["测试推理", "技术验收", "tech_villager", "villager", "minecraft"],
+    "model_preset_id": "tech_villager",
     "transpose": 0
   }
 ]

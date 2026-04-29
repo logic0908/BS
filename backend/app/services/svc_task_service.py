@@ -108,6 +108,7 @@ class SvcTaskService:
         prompt_text: str,
         style_strength: float,
         style_preset_id: str | None = None,
+        model_preset_id: str | None = None,
         output_path: str | None = None,
     ) -> str:
         task = self._tasks[task_id]
@@ -135,6 +136,7 @@ class SvcTaskService:
                     "prompt_text": prompt_text,
                     "style_strength": style_strength,
                     "style_preset_id": style_preset_id,
+                    "model_preset_id": model_preset_id,
                     "is_vocal_only": upload.is_vocal_only,
                 },
             )
@@ -146,11 +148,17 @@ class SvcTaskService:
             task.stage = "style_selected"
             task.progress = 60
             task.message = "正在检索风格预设"
-            selected_style = style_library.retrieve_style(prompt_text, style_preset_id=style_preset_id)
+            selected_style = style_library.retrieve_style(
+                prompt_text,
+                style_preset_id=style_preset_id,
+                model_preset_id=model_preset_id,
+            )
             task.selected_style = selected_style
             selected_style_payload = {
                 "style_id": selected_style.get("style_id"),
                 "description": selected_style.get("description"),
+                "model_preset_id": selected_style.get("model_preset_id"),
+                "model_display_name": selected_style.get("model_display_name"),
                 "model_path": selected_style.get("model_path"),
                 "config_path": selected_style.get("config_path"),
                 "speaker": selected_style.get("speaker"),

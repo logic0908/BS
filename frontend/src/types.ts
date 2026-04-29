@@ -30,6 +30,14 @@ export interface ProcessingResult {
     mock_enabled?: boolean | null;
     model_path?: string | null;
     config_path?: string | null;
+    model_preset_id?: string | null;
+    model_display_name?: string | null;
+    source_repo?: string | null;
+    license?: string | null;
+    model_path_basename?: string | null;
+    config_path_basename?: string | null;
+    is_demo_quality?: boolean | null;
+    is_technical_validation_only?: boolean | null;
     speaker?: string | null;
     device?: string | null;
     selected_output?: string | null;

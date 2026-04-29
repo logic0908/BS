@@ -16,6 +16,7 @@ import soundfile as sf
 
 from app.models_svc.sovits_assets import inspect_sovits_assets
 from app.models_svc.svc_base import VoiceConversionEngine
+from app.services import svc_model_presets
 
 logger = logging.getLogger(__name__)
 RESULT_AUDIO_EXTENSIONS = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
@@ -40,6 +41,14 @@ class SoVitsRuntimeConfig:
     timeout_seconds: int
     mock_enabled: bool
     python_bin: str
+    model_preset_id: str = ""
+    model_display_name: str = ""
+    source_repo: str = ""
+    license: str = ""
+    model_path_basename: str = ""
+    config_path_basename: str = ""
+    is_demo_quality: bool = False
+    is_technical_validation_only: bool = False
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -53,6 +62,14 @@ class SoVitsRuntimeConfig:
             "timeout_seconds": self.timeout_seconds,
             "mock_enabled": self.mock_enabled,
             "python_bin": self.python_bin,
+            "model_preset_id": self.model_preset_id,
+            "model_display_name": self.model_display_name,
+            "source_repo": self.source_repo,
+            "license": self.license,
+            "model_path_basename": self.model_path_basename or Path(self.model_path).name,
+            "config_path_basename": self.config_path_basename or Path(self.config_path).name,
+            "is_demo_quality": self.is_demo_quality,
+            "is_technical_validation_only": self.is_technical_validation_only,
         }
 
 
@@ -117,6 +134,14 @@ class SoVitsSvcEngine(VoiceConversionEngine):
                 "config_path": runtime_config.config_path,
                 "speaker": runtime_config.speaker,
                 "device": runtime_config.device,
+                "model_preset_id": runtime_config.model_preset_id,
+                "model_display_name": runtime_config.model_display_name,
+                "source_repo": runtime_config.source_repo,
+                "license": runtime_config.license,
+                "model_path_basename": runtime_config.model_path_basename or Path(runtime_config.model_path).name,
+                "config_path_basename": runtime_config.config_path_basename or Path(runtime_config.config_path).name,
+                "is_demo_quality": runtime_config.is_demo_quality,
+                "is_technical_validation_only": runtime_config.is_technical_validation_only,
                 "selected_output": output_path,
                 "final_output_path": output_path,
                 "return_code": 0,
@@ -175,16 +200,22 @@ class SoVitsSvcEngine(VoiceConversionEngine):
 
     def resolve_runtime_config(self, style_preset: dict[str, Any] | None = None) -> SoVitsRuntimeConfig:
         preset = style_preset or {}
+        presets_disabled = _env_flag("SVC_DISABLE_MODEL_PRESETS", False)
+        preset_id = str(preset.get("model_preset_id") or os.environ.get("SVC_MODEL_PRESET_ID", "") or "").strip() or None
+        model_preset = None if presets_disabled else svc_model_presets.resolve_preset(preset_id)
+        model_metadata = model_preset.to_runtime_dict() if model_preset else {}
         repo_dir = os.environ.get("SOVITS_REPO_DIR", self.repo_dir)
         infer_script = os.environ.get("SOVITS_INFER_SCRIPT", self.infer_script)
-        model_path = str(preset.get("model_path") or os.environ.get("SOVITS_MODEL_PATH", self.model_path))
-        config_path = str(preset.get("config_path") or os.environ.get("SOVITS_CONFIG_PATH", self.config_path))
-        speaker = str(preset.get("speaker") or os.environ.get("SOVITS_SPEAKER", self.speaker))
-        device = os.environ.get("SOVITS_DEVICE", self.device)
-        transpose = int(preset.get("transpose", os.environ.get("SOVITS_TRANSPOSE", self.transpose)))
+        model_path = str(preset.get("model_path") or model_metadata.get("model_path") or os.environ.get("SOVITS_MODEL_PATH", self.model_path))
+        config_path = str(preset.get("config_path") or model_metadata.get("config_path") or os.environ.get("SOVITS_CONFIG_PATH", self.config_path))
+        speaker = str(preset.get("speaker") or model_metadata.get("speaker") or os.environ.get("SOVITS_SPEAKER", self.speaker))
+        device = str(preset.get("device") or model_metadata.get("device") or os.environ.get("SOVITS_DEVICE", self.device))
+        transpose = int(preset.get("transpose", model_metadata.get("transpose", os.environ.get("SOVITS_TRANSPOSE", self.transpose))))
         timeout_seconds = int(os.environ.get("SOVITS_TIMEOUT_SECONDS", str(self.timeout_seconds)))
         mock_enabled = _env_flag("SOVITS_MOCK", self.mock_enabled)
         python_bin = os.environ.get("SOVITS_PYTHON") or self.python_bin
+        model_path_basename = str(model_metadata.get("model_path_basename") or Path(model_path).name)
+        config_path_basename = str(model_metadata.get("config_path_basename") or Path(config_path).name)
         return SoVitsRuntimeConfig(
             repo_dir=repo_dir,
             infer_script=infer_script,
@@ -196,6 +227,16 @@ class SoVitsSvcEngine(VoiceConversionEngine):
             timeout_seconds=timeout_seconds,
             mock_enabled=mock_enabled,
             python_bin=python_bin,
+            model_preset_id=str(preset.get("model_preset_id") or model_metadata.get("model_preset_id") or ""),
+            model_display_name=str(preset.get("model_display_name") or model_metadata.get("model_display_name") or ""),
+            source_repo=str(preset.get("source_repo") or model_metadata.get("source_repo") or ""),
+            license=str(preset.get("license") or model_metadata.get("license") or ""),
+            model_path_basename=model_path_basename,
+            config_path_basename=config_path_basename,
+            is_demo_quality=bool(preset.get("is_demo_quality", model_metadata.get("is_demo_quality", False))),
+            is_technical_validation_only=bool(
+                preset.get("is_technical_validation_only", model_metadata.get("is_technical_validation_only", False))
+            ),
         )
 
     def _run_real_inference(
@@ -216,6 +257,7 @@ class SoVitsSvcEngine(VoiceConversionEngine):
             input_vocals_path=input_vocals_path,
             task_id=task_id,
         )
+        start_timestamp = time.time()
         existing_outputs = self._result_files(results_dir)
         command = self._build_command(runtime_config, clean_name)
         start_time = time.monotonic()
@@ -307,7 +349,7 @@ class SoVitsSvcEngine(VoiceConversionEngine):
             self._write_debug_json(debug_dir, "error.json", error.to_dict())
             raise error from exc
 
-        discovered_outputs = self._discover_new_outputs(results_dir, existing_outputs)
+        discovered_outputs = self._discover_new_outputs(results_dir, existing_outputs, since_timestamp=start_timestamp)
         command_log["discovered_outputs"] = discovered_outputs
         selected_output = discovered_outputs[-1] if discovered_outputs else None
         command_log["selected_output"] = selected_output
@@ -336,6 +378,14 @@ class SoVitsSvcEngine(VoiceConversionEngine):
             "config_path": runtime_config.config_path,
             "speaker": runtime_config.speaker,
             "device": runtime_config.device,
+            "model_preset_id": runtime_config.model_preset_id,
+            "model_display_name": runtime_config.model_display_name,
+            "source_repo": runtime_config.source_repo,
+            "license": runtime_config.license,
+            "model_path_basename": runtime_config.model_path_basename or Path(runtime_config.model_path).name,
+            "config_path_basename": runtime_config.config_path_basename or Path(runtime_config.config_path).name,
+            "is_demo_quality": runtime_config.is_demo_quality,
+            "is_technical_validation_only": runtime_config.is_technical_validation_only,
             "selected_output": selected_output,
             "final_output_path": output_path,
             "return_code": result.returncode,
@@ -561,9 +611,24 @@ class SoVitsSvcEngine(VoiceConversionEngine):
                 result_files.add(os.path.abspath(entry.path))
         return result_files
 
-    def _discover_new_outputs(self, results_dir: str, existing_outputs: set[str]) -> list[str]:
+    def _discover_new_outputs(
+        self,
+        results_dir: str,
+        existing_outputs: set[str],
+        since_timestamp: float | None = None,
+    ) -> list[str]:
         current_outputs = self._result_files(results_dir)
-        new_outputs = [path for path in current_outputs if path not in existing_outputs]
+        new_outputs = []
+        for path in current_outputs:
+            if path not in existing_outputs:
+                new_outputs.append(path)
+                continue
+            if since_timestamp is not None:
+                try:
+                    if os.path.getmtime(path) >= since_timestamp - 0.5:
+                        new_outputs.append(path)
+                except OSError:
+                    continue
         new_outputs.sort(key=lambda path: (os.path.getmtime(path), path))
         return new_outputs
 

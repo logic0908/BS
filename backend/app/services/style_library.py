@@ -5,6 +5,8 @@ import os
 import re
 from typing import Any
 
+from app.services import svc_model_presets
+
 APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STYLE_LIBRARY_PATH = os.environ.get(
     "STYLE_LIBRARY_PATH",
@@ -26,7 +28,11 @@ def encode_prompt(prompt_text: str) -> dict[str, Any]:
     return {"normalized": normalized, "tokens": tokens}
 
 
-def retrieve_style(prompt_text: str = "", style_preset_id: str | None = None) -> dict[str, Any]:
+def retrieve_style(
+    prompt_text: str = "",
+    style_preset_id: str | None = None,
+    model_preset_id: str | None = None,
+) -> dict[str, Any]:
     presets = load_style_library()
     if not presets:
         raise RuntimeError("style library is empty")
@@ -40,7 +46,7 @@ def retrieve_style(prompt_text: str = "", style_preset_id: str | None = None) ->
                 selected["matched_via"] = "style_preset_id"
                 selected["matched_keywords"] = [style_preset_id]
                 selected["reason"] = f"显式指定 style_preset_id：{style_preset_id}"
-                return apply_runtime_defaults(selected)
+                return apply_runtime_defaults(selected, model_preset_id=model_preset_id)
         raise RuntimeError(f"style_preset_id not found: {style_preset_id}")
 
     encoded = encode_prompt(prompt_text)
@@ -62,14 +68,30 @@ def retrieve_style(prompt_text: str = "", style_preset_id: str | None = None) ->
     selected["matched_via"] = "prompt_text"
     selected["matched_keywords"] = best_matched_keywords
     selected["reason"] = _build_reason(best_preset, best_matched_keywords, best_score)
-    return apply_runtime_defaults(selected)
+    return apply_runtime_defaults(selected, model_preset_id=model_preset_id)
 
 
-def apply_runtime_defaults(preset: dict[str, Any]) -> dict[str, Any]:
+def apply_runtime_defaults(preset: dict[str, Any], model_preset_id: str | None = None) -> dict[str, Any]:
     resolved = dict(preset)
-    resolved["model_path"] = resolved.get("model_path") or os.environ.get("SOVITS_MODEL_PATH", "")
-    resolved["config_path"] = resolved.get("config_path") or os.environ.get("SOVITS_CONFIG_PATH", "")
-    resolved["speaker"] = resolved.get("speaker") or os.environ.get("SOVITS_SPEAKER", "")
+    preset_id = model_preset_id or str(resolved.get("model_preset_id") or "").strip() or None
+    model_preset = svc_model_presets.resolve_preset(preset_id)
+    model_metadata = model_preset.to_runtime_dict() if model_preset else {}
+    for key, value in model_metadata.items():
+        resolved.setdefault(key, value)
+    resolved["model_preset_id"] = str(resolved.get("model_preset_id") or model_metadata.get("model_preset_id") or "")
+    resolved["model_display_name"] = str(resolved.get("model_display_name") or model_metadata.get("model_display_name") or "")
+    resolved["model_path"] = resolved.get("model_path") or model_metadata.get("model_path") or os.environ.get("SOVITS_MODEL_PATH", "")
+    resolved["config_path"] = resolved.get("config_path") or model_metadata.get("config_path") or os.environ.get("SOVITS_CONFIG_PATH", "")
+    resolved["speaker"] = resolved.get("speaker") or model_metadata.get("speaker") or os.environ.get("SOVITS_SPEAKER", "")
+    resolved["device"] = resolved.get("device") or model_metadata.get("device")
+    resolved["source_repo"] = resolved.get("source_repo") or model_metadata.get("source_repo", "")
+    resolved["license"] = resolved.get("license") or model_metadata.get("license", "")
+    resolved["model_path_basename"] = resolved.get("model_path_basename") or model_metadata.get("model_path_basename", "")
+    resolved["config_path_basename"] = resolved.get("config_path_basename") or model_metadata.get("config_path_basename", "")
+    resolved["is_demo_quality"] = bool(resolved.get("is_demo_quality", model_metadata.get("is_demo_quality", False)))
+    resolved["is_technical_validation_only"] = bool(
+        resolved.get("is_technical_validation_only", model_metadata.get("is_technical_validation_only", False))
+    )
     resolved["transpose"] = int(resolved.get("transpose", 0))
     resolved["match_score"] = resolved.get("match_score", 0)
     resolved["matched_keywords"] = list(resolved.get("matched_keywords") or [])
