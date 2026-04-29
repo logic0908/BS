@@ -25,6 +25,20 @@ export interface ConversionConfig {
 export interface ProcessingResult {
   originalUrl: string;
   convertedUrl: string;
+  metadata?: {
+    inference_mode?: string | null;
+    mock_enabled?: boolean | null;
+    model_path?: string | null;
+    config_path?: string | null;
+    speaker?: string | null;
+    device?: string | null;
+    selected_output?: string | null;
+    final_output_path?: string | null;
+    return_code?: number | null;
+    elapsed_seconds?: number | null;
+    sovits_command_debug_path?: string | null;
+    called_inference_main?: boolean | null;
+  };
 }
 
 export interface ProcessingParams {
@@ -38,11 +52,14 @@ export interface ProcessingParams {
 }
 
 export const STYLE_PRESETS = [
-  "流行", 
-  "抒情", 
-  "古风", 
-  "摇滚", 
-  "R&B", 
-  "治愈", 
-  "清澈少年音"
+  "流行",
+  "温柔",
+  "气声",
+  "清亮",
+  "摇滚",
+  "厚重",
+  "少年感",
+  "治愈",
+  "女声",
+  "男声"
 ];

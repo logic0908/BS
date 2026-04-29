@@ -199,6 +199,41 @@ featurize port export 3001
 pm2 logs bs-frontend --lines 200
 ```
 
+## 真实演示启动
+
+当前默认主链路：`So-VITS-SVC`
+
+高级模式：`StyleSinger`
+
+后端启动：
+
+```bash
+bash scripts/start_real_svc_demo.sh
+```
+
+前端启动：
+
+```bash
+bash scripts/start_frontend_demo.sh
+```
+
+命令行验收：
+
+```bash
+bash scripts/run_sovits_real_cuda_check.sh
+```
+
+演示素材导出：
+
+```bash
+bash scripts/export_demo_assets.sh
+```
+
+当前模型说明：
+
+- `minecraft_villager` 是技术验收模型，用于证明真实 So-VITS-SVC 推理链路已跑通。
+- 它不代表最终演示目标音色，也不代表“清亮女声”“厚重女声”等最终效果模型。
+
 ## 接口速览 (API Quick Reference)
 | Method | Path | 说明 |
 |---|---|---|

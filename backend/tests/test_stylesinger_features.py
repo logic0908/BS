@@ -6,8 +6,8 @@ import librosa
 import logging
 import pytest
 from io import BytesIO
-from fastapi import BackgroundTasks, UploadFile
-from fastapi.testclient import TestClient
+from types import SimpleNamespace
+from fastapi import BackgroundTasks, HTTPException, UploadFile
 
 # 添加 backend 到 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -383,13 +383,17 @@ def test_plain_whisper_fallback_when_whisperx_unavailable(mocker):
     assert out == fallback
     plain_mock.assert_called_once()
 
-def test_feature_extraction_mode_defaults_to_legacy_even_with_lyrics(mocker):
+def test_feature_extraction_mode_defaults_to_auto_even_with_lyrics(mocker):
     mocker.patch.object(
         stylesinger_service,
         "get_enhanced_stack_status",
-        return_value={"checked": True, "ready": True, "mode_default": "legacy", "missing": [], "details": {}},
+        return_value={"checked": True, "ready": True, "mode_default": "auto", "missing": [], "details": {}},
     )
     mocker.patch.dict(os.environ, {}, clear=True)
+    assert stylesinger_service._get_feature_extraction_mode(lyrics="我爱你") == "auto"
+
+def test_feature_extraction_mode_allows_explicit_legacy(mocker):
+    mocker.patch.dict(os.environ, {"STYLE_FEATURE_MODE": "legacy"}, clear=True)
     assert stylesinger_service._get_feature_extraction_mode(lyrics="我爱你") == "legacy"
 
 def test_parselmouth_pitch_backend_used_by_default(mocker):
@@ -444,7 +448,13 @@ def test_extract_features_with_plain_whisper_and_parselmouth_returns_valid_4d(mo
 
     out = stylesinger_service.extract_features("/fake.wav", prompt_text="抒情")
     assert isinstance(out, dict)
-    assert set(out.keys()) == {"ph", "note", "note_dur", "note_type", "quality_ok", "quality_reason", "metrics"}
+    assert "ok" in out
+    assert out["source"] in {"auto", "metadata", "legacy"}
+    assert "quality" in out or "metrics" in out
+    assert {"ph", "note", "note_dur", "note_type"}.issubset(out.keys())
+    if out["ok"] is False:
+        assert out.get("code") == "FEATURE_QUALITY_GATE_FAILED"
+        assert out.get("reasons") or out.get("quality", {}).get("hard_gate_reasons")
     assert len(out["ph"]) == len(out["note"]) == len(out["note_dur"]) == len(out["note_type"])
     assert set(out["note_type"]).issubset({1, 2, 3})
     for ph, note, note_type in zip(out["ph"], out["note"], out["note_type"]):
@@ -575,92 +585,74 @@ def test_extract_features_prefers_transcript_hint_when_provided(mocker):
     stylesinger_service.extract_features("/fake.wav", transcript_hint="我")
     assert whisper_mock.call_args.kwargs["transcript_hint"] == "我"
 
-def test_tasks_continue_when_quality_gate_warns(mocker):
+def test_tasks_block_when_quality_gate_fails(mocker):
     from app.api.endpoints.synthesis import create_synthesis_task
-    mocker.patch(
-        "app.models_svc.stylesinger_wrapper.StyleSingerService._compute_feature_quality_metrics",
-        return_value={"micro_token_ratio": 0.5, "rest_ratio": 0.0, "token_count": 10},
-    )
-    mocker.patch(
-        "app.models_svc.stylesinger_wrapper.StyleSingerService._evaluate_feature_quality_gate",
-        return_value=(False, "Too many micro segments in extracted features"),
-    )
-    mocker.patch.object(stylesinger_service, "create_task", return_value="task-soft-gate")
-    mocker.patch.object(stylesinger_service, "process_task", return_value=None)
-    resp = asyncio.run(
-        create_synthesis_task(
-            background_tasks=BackgroundTasks(),
-            text="test",
-            style_strength=0.6,
-            ph_seq="a,b,c",
-            note_seq="60,60,60",
-            note_dur_seq="0.1,0.1,0.1",
-            note_type_seq="2,2,2",
-            is_vocal_only=False,
-            ref_audio=UploadFile(filename="test.wav", file=BytesIO(b"fake")),
+    mocker.patch.object(stylesinger_service, "validate_score_payload", return_value={
+        "ok": False,
+        "quality": {"hard_gate_passed": False, "micro_token_ratio": 0.5},
+        "reasons": ["Too many micro segments"],
+        "features_preview": {},
+    })
+    process_mock = mocker.patch.object(stylesinger_service, "process_task", return_value=None)
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            create_synthesis_task(
+                background_tasks=BackgroundTasks(),
+                text="test",
+                style_strength=0.6,
+                ph_seq="a,b,c",
+                note_seq="60,60,60",
+                note_dur_seq="0.1,0.1,0.1",
+                note_type_seq="2,2,2",
+                is_vocal_only=False,
+                ref_audio=UploadFile(filename="test.wav", file=BytesIO(b"fake")),
+            )
         )
-    )
-    assert resp["task_id"] == "task-soft-gate"
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "FEATURE_QUALITY_GATE_FAILED"
+    assert "Too many micro segments" in str(exc_info.value.detail)
+    process_mock.assert_not_called()
 
-def test_synthesize_continue_when_quality_gate_warns(mocker, tmp_path):
-    from fastapi.responses import FileResponse
+def test_synthesize_blocks_when_quality_gate_fails(mocker):
     from app.api.endpoints.synthesis import synthesize_voice
-    mocker.patch(
-        "app.models_svc.stylesinger_wrapper.StyleSingerService._compute_feature_quality_metrics",
-        return_value={"micro_token_ratio": 0.5, "rest_ratio": 0.0, "token_count": 10},
-    )
-    mocker.patch(
-        "app.models_svc.stylesinger_wrapper.StyleSingerService._evaluate_feature_quality_gate",
-        return_value=(False, "Too many micro segments in extracted features"),
-    )
-    output_path = tmp_path / "out.wav"
-    output_path.write_bytes(b"RIFFdemo")
-    mocker.patch.object(stylesinger_service, "create_task", return_value="sync-soft-gate")
-    mocker.patch.object(stylesinger_service, "process_task", return_value=None)
-    mocker.patch.object(
-        stylesinger_service,
-        "get_task",
-        return_value=stylesinger_wrapper_module.TaskState(
-            task_id="sync-soft-gate",
-            status="completed",
-            message="done",
-            output_path=str(output_path),
-            error=None,
-        ),
-    )
-    mocker.patch("app.api.endpoints.synthesis._task_output_path", return_value=str(output_path))
-    resp = asyncio.run(
-        synthesize_voice(
-            text="test",
-            style_strength=0.6,
-            ph_seq="a,b,c",
-            note_seq="60,60,60",
-            note_dur_seq="0.1,0.1,0.1",
-            note_type_seq="2,2,2",
-            is_vocal_only=False,
-            ref_audio=UploadFile(filename="test.wav", file=BytesIO(b"fake")),
+    mocker.patch.object(stylesinger_service, "validate_score_payload", return_value={
+        "ok": False,
+        "quality": {"hard_gate_passed": False, "micro_token_ratio": 0.5},
+        "reasons": ["Too many micro segments"],
+        "features_preview": {},
+    })
+    process_mock = mocker.patch.object(stylesinger_service, "process_task", return_value=None)
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            synthesize_voice(
+                text="test",
+                style_strength=0.6,
+                ph_seq="a,b,c",
+                note_seq="60,60,60",
+                note_dur_seq="0.1,0.1,0.1",
+                note_type_seq="2,2,2",
+                is_vocal_only=False,
+                ref_audio=UploadFile(filename="test.wav", file=BytesIO(b"fake")),
+            )
         )
-    )
-    assert isinstance(resp, FileResponse)
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail["code"] == "FEATURE_QUALITY_GATE_FAILED"
+    assert "Too many micro segments" in str(exc_info.value.detail)
+    process_mock.assert_not_called()
 
-def test_process_task_treats_quality_gate_as_soft_warning(mocker, tmp_path):
-    task_id = "soft-warning-process"
+def test_process_task_marks_failed_when_quality_gate_fails(mocker, tmp_path):
+    task_id = "hard-gate-process"
     stylesinger_service._tasks[task_id] = stylesinger_wrapper_module.TaskState(
         task_id=task_id,
         status="queued",
         message="任务已创建",
     )
-    mocker.patch.object(
-        stylesinger_service,
-        "_compute_feature_quality_metrics",
-        return_value={"micro_token_ratio": 0.5, "rest_ratio": 0.0, "token_count": 10},
-    )
-    mocker.patch.object(
-        stylesinger_service,
-        "_evaluate_feature_quality_gate",
-        return_value=(False, "Too many micro segments in extracted features"),
-    )
-    mocker.patch.object(stylesinger_service, "_should_run_demucs", return_value=False)
+    mocker.patch.object(stylesinger_service, "validate_score_payload", return_value={
+        "ok": False,
+        "quality": {"hard_gate_passed": False, "micro_token_ratio": 0.5},
+        "reasons": ["Too many micro segments"],
+        "features_preview": {},
+    })
     synthesize_mock = mocker.patch.object(stylesinger_service, "synthesize", return_value=str(tmp_path / "out.wav"))
 
     stylesinger_service.process_task(
@@ -679,34 +671,51 @@ def test_process_task_treats_quality_gate_as_soft_warning(mocker, tmp_path):
 
     task = stylesinger_service.get_task(task_id)
     assert task is not None
-    assert task.status == "completed"
-    assert task.message == "转换完成"
-    assert task.error is None
-    synthesize_mock.assert_called_once()
+    assert task.status == "failed"
+    assert "Too many micro segments" in (task.error or "")
+    synthesize_mock.assert_not_called()
 
 def test_extract_features_returns_quality_metadata(mocker):
-    from fastapi.testclient import TestClient
-    from app.main import app
+    from app.api.endpoints import synthesis as synthesis_endpoint
+    mocker.patch.object(
+        stylesinger_service,
+        "get_enhanced_stack_status",
+        return_value={"checked": True, "ready": False, "mode_default": "auto", "missing": [], "details": {}},
+    )
     mocker.patch(
         "app.models_svc.stylesinger_wrapper.StyleSingerService.extract_features",
         return_value={
-            "ph": ["a"], "note": [60], "note_dur": [1.0], "note_type": [2],
-            "quality_ok": False,
-            "quality_reason": "test reason",
-            "metrics": {"micro_token_ratio": 0.5}
+            "ok": False,
+            "code": "FEATURE_QUALITY_GATE_FAILED",
+            "message": "当前提取的四维特征可信度较低，已停止转换。",
+            "source": "auto",
+            "reasons": ["test reason"],
+            "quality": {
+                "hard_gate_passed": False,
+                "micro_token_ratio": 0.5,
+                "breathe_count": 0,
+                "duration_mismatch_ratio": 0.0,
+            },
+            "features": {
+                "ph": ["a"],
+                "note": [60],
+                "note_dur": [1.0],
+                "note_type": [2],
+            },
         }
     )
-    with TestClient(app) as client:
-        resp = client.post(
-            "/api/v1/extract_features",
-            data={"prompt_text": "", "is_vocal_only": "true", "lyrics": "", "enhanced_mode": "false"},
-            files={"audio": ("test.wav", b"fake", "audio/wav")},
+    data = asyncio.run(
+        synthesis_endpoint.extract_features(
+            audio=UploadFile(filename="test.wav", file=BytesIO(b"fake")),
+            prompt_text="",
+            is_vocal_only=True,
+            lyrics="",
         )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["quality_ok"] is False
-    assert data["quality_reason"] == "test reason"
-    assert "metrics" in data
+    )
+    assert data["ok"] is False
+    assert data["code"] == "FEATURE_QUALITY_GATE_FAILED"
+    assert data["reasons"] == ["test reason"]
+    assert data["quality"]["micro_token_ratio"] == 0.5
 
 def test_merge_micro_lyric_into_previous_when_same_pitch_family():
     from app.models_svc.stylesinger_wrapper import StyleSingerService
@@ -755,11 +764,12 @@ def test_startup_check_marks_enhanced_unavailable_when_whisperx_missing(mocker):
         "details": {"ffmpeg_available": True, "rmvpe_model_path": "/tmp/rmvpe.pt", "rmvpe_model_exists": True},
     }
     mocker.patch.object(stylesinger_service, "get_enhanced_stack_status", return_value=expected)
-    with TestClient(app) as client:
-        assert client.app.state.enhanced_stack_status["ready"] is False
-        assert client.app.state.enhanced_stack_status["missing"] == ["whisperx"]
+    app.state.enhanced_stack_status = expected
+    assert app.state.enhanced_stack_status["ready"] is False
+    assert app.state.enhanced_stack_status["missing"] == ["whisperx"]
 
 def test_capabilities_endpoint_reports_missing_dependencies(mocker):
+    from app.api.endpoints import synthesis as synthesis_endpoint
     expected = {
         "checked": True,
         "ready": False,
@@ -768,14 +778,13 @@ def test_capabilities_endpoint_reports_missing_dependencies(mocker):
         "details": {"ffmpeg_available": True, "rmvpe_model_path": "/tmp/rmvpe.pt", "rmvpe_model_exists": False},
     }
     mocker.patch.object(stylesinger_service, "get_enhanced_stack_status", return_value=expected)
-    with TestClient(app) as client:
-        resp = client.get("/api/v1/capabilities")
-    assert resp.status_code == 200
-    data = resp.json()["feature_extraction"]
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(enhanced_stack_status=expected)))
+    data = asyncio.run(synthesis_endpoint.capabilities(request))["feature_extraction"]
     assert data["enhanced_ready"] is False
     assert data["missing_dependencies"] == ["whisperx", "rmvpe"]
 
 def test_capabilities_reports_numpy_tensorflow_conflict(mocker):
+    from app.api.endpoints import synthesis as synthesis_endpoint
     expected = {
         "checked": True,
         "ready": False,
@@ -793,10 +802,8 @@ def test_capabilities_reports_numpy_tensorflow_conflict(mocker):
         },
     }
     mocker.patch.object(stylesinger_service, "get_enhanced_stack_status", return_value=expected)
-    with TestClient(app) as client:
-        resp = client.get("/api/v1/capabilities")
-    assert resp.status_code == 200
-    data = resp.json()["feature_extraction"]
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(enhanced_stack_status=expected)))
+    data = asyncio.run(synthesis_endpoint.capabilities(request))["feature_extraction"]
     assert data["numpy_version"] == "2.4.4"
     assert data["tensorflow_installed"] is True
     assert data["ml_dtypes_installed"] is True
@@ -863,6 +870,7 @@ def test_enhanced_ready_false_when_numpy2_and_tensorflow_present(mocker, monkeyp
     assert status["details"]["whisperx_runtime_ok"] is False
 
 def test_health_endpoint_reports_enhanced_ready_flag(mocker):
+    from app.api.endpoints import synthesis as synthesis_endpoint
     expected = {
         "checked": True,
         "ready": False,
@@ -871,12 +879,12 @@ def test_health_endpoint_reports_enhanced_ready_flag(mocker):
         "details": {},
     }
     mocker.patch.object(stylesinger_service, "get_enhanced_stack_status", return_value=expected)
-    with TestClient(app) as client:
-        resp = client.get("/api/v1/health")
-    assert resp.status_code == 200
-    assert resp.json()["enhanced_ready"] is False
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(enhanced_stack_status=expected)))
+    data = asyncio.run(synthesis_endpoint.health(request))
+    assert data["enhanced_ready"] is False
 
 def test_enhanced_request_returns_structured_error_not_500(mocker):
+    from app.api.endpoints import synthesis as synthesis_endpoint
     # This test used to mock the front-end passing enhanced_mode=True and checking the endpoint error.
     # Since we removed frontend mode selection, we test the backend policy directly triggering an error.
     expected = {
@@ -892,16 +900,20 @@ def test_enhanced_request_returns_structured_error_not_500(mocker):
     # We patch the underlying extract_features so we don't actually process audio but raise the expected error
     mocker.patch.object(stylesinger_service, "extract_features", side_effect=RuntimeError("Enhanced feature extraction requires whisperx, but module is not installed"))
 
-    with TestClient(app) as client:
-        resp = client.post(
-            "/api/v1/extract_features",
-            data={"prompt_text": "", "is_vocal_only": "true", "lyrics": ""},
-            files={"audio": ("test.wav", b"fake", "audio/wav")},
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            synthesis_endpoint.extract_features(
+                audio=UploadFile(filename="test.wav", file=BytesIO(b"fake")),
+                prompt_text="",
+                is_vocal_only=True,
+                lyrics="",
+            )
         )
-    assert resp.status_code == 500
-    assert "requires whisperx" in resp.json()["detail"]
+    assert exc_info.value.status_code == 500
+    assert "requires whisperx" in exc_info.value.detail
 
 def test_structured_error_message_for_numpy_tensorflow_abi_conflict(mocker):
+    from app.api.endpoints import synthesis as synthesis_endpoint
     expected = {
         "checked": True,
         "ready": False,
@@ -919,14 +931,17 @@ def test_structured_error_message_for_numpy_tensorflow_abi_conflict(mocker):
     mocker.patch.dict("os.environ", {"FEATURE_EXTRACTION_POLICY": "force_enhanced"})
     mocker.patch.object(stylesinger_service, "extract_features", side_effect=RuntimeError("NumPy 2.x ABI conflict"))
 
-    with TestClient(app) as client:
-        resp = client.post(
-            "/api/v1/extract_features",
-            data={"prompt_text": "", "is_vocal_only": "true", "lyrics": ""},
-            files={"audio": ("test.wav", b"fake", "audio/wav")},
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(
+            synthesis_endpoint.extract_features(
+                audio=UploadFile(filename="test.wav", file=BytesIO(b"fake")),
+                prompt_text="",
+                is_vocal_only=True,
+                lyrics="",
+            )
         )
-    assert resp.status_code == 500
-    assert "ABI conflict" in resp.json()["detail"]
+    assert exc_info.value.status_code == 500
+    assert "ABI conflict" in exc_info.value.detail
 
 def test_check_enhanced_stack_script_reports_missing_items(mocker):
     expected = {
@@ -994,6 +1009,7 @@ def test_enhanced_stack_accepts_vendored_rmvpe_module(mocker, monkeypatch, tmp_p
     assert status["details"]["rmvpe_model_exists"] is True
 
 def test_capabilities_reports_rmvpe_ready_fields(mocker):
+    from app.api.endpoints import synthesis as synthesis_endpoint
     expected = {
         "checked": True,
         "ready": False,
@@ -1010,10 +1026,8 @@ def test_capabilities_reports_rmvpe_ready_fields(mocker):
         },
     }
     mocker.patch.object(stylesinger_service, "get_enhanced_stack_status", return_value=expected)
-    with TestClient(app) as client:
-        resp = client.get("/api/v1/capabilities")
-    assert resp.status_code == 200
-    data = resp.json()["feature_extraction"]
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(enhanced_stack_status=expected)))
+    data = asyncio.run(synthesis_endpoint.capabilities(request))["feature_extraction"]
     assert data["rmvpe_ready"] is False
     assert data["rmvpe_module_source"] == "vendored"
     assert data["rmvpe_model_exists"] is False

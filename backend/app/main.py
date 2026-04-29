@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Singing Voice Style Conversion API",
-    description="API for StyleSinger based singing voice conversion",
+    description="Hybrid singing voice conversion API with So-VITS-SVC as the default pipeline and StyleSinger as advanced mode",
     version="1.0.0",
     lifespan=lifespan,
 )

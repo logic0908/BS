@@ -68,3 +68,35 @@ node_modules/
 # archives
 *.zip
 *.doc
+# ==== Local model assets / third-party repos ====
+local_models/
+so-vits-svc/
+
+# ==== Runtime outputs / debug artifacts ====
+runtime/
+demo/
+*.wav
+*.flac
+*.mp3
+
+# ==== Python cache / test cache ====
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ==== Frontend build/cache ====
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# ==== Environment / secrets ====
+.env
+.env.*
+!.env.example
+
+# ==== OS / editor ====
+.DS_Store
+.vscode/
+.idea/

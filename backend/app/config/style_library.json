@@ -1,0 +1,38 @@
+[
+  {
+    "style_id": "pop_bright",
+    "description": "流行、明亮、清澈、少年感",
+    "keywords": ["流行", "明亮", "清澈", "清亮", "clear", "少年", "少年感", "pop", "bright"],
+    "model_path": "",
+    "config_path": "",
+    "speaker": "",
+    "transpose": 0
+  },
+  {
+    "style_id": "lyrical_soft",
+    "description": "抒情、温柔、细腻、治愈",
+    "keywords": ["抒情", "温柔", "细腻", "治愈", "soft", "ballad"],
+    "model_path": "",
+    "config_path": "",
+    "speaker": "",
+    "transpose": 0
+  },
+  {
+    "style_id": "rock_power",
+    "description": "摇滚、力量感、爆发、颗粒感",
+    "keywords": ["摇滚", "力量", "爆发", "颗粒", "厚重", "powerful", "thick", "deep", "rock"],
+    "model_path": "",
+    "config_path": "",
+    "speaker": "",
+    "transpose": 0
+  },
+  {
+    "style_id": "female_soft",
+    "description": "女声、柔和、清晰、轻盈",
+    "keywords": ["女声", "female", "柔和", "轻盈", "清晰", "soft female"],
+    "model_path": "",
+    "config_path": "",
+    "speaker": "",
+    "transpose": 0
+  }
+]

@@ -9,8 +9,10 @@ import json
 import importlib
 import importlib.util
 import importlib.metadata
-from dataclasses import dataclass
-from typing import Dict
+from dataclasses import asdict, dataclass, field
+from typing import Any, Dict, Literal
+
+os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join("/tmp", "numba_cache"))
 
 import librosa
 import numpy as np
@@ -113,13 +115,31 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-DEFAULT_FEATURE_EXTRACTION_MODE = "legacy"
+# StyleSinger uses 1=rest, 2=lyric, 3=slur; this is documented in
+# StyleSinger/README.md and mirrored in processed GTSinger metadata ep_types.
+NOTE_TYPE_REST = 1
+NOTE_TYPE_LYRIC = 2
+NOTE_TYPE_SLUR = 3
+
+MIN_DUR = 0.08
+MICRO_DUR = 0.075
+MAX_MICRO_RATIO = 0.25
+
+DEFAULT_FEATURE_EXTRACTION_MODE = (os.environ.get("STYLE_FEATURE_MODE") or "auto").strip().lower()
+STYLE_METADATA_PATH = os.environ.get(
+    "STYLE_METADATA_PATH",
+    os.path.join(STYLESINGER_ROOT, "data/processed/style/metadata.json"),
+)
+STYLE_METADATA_AUDIO_ROOT = os.environ.get("STYLE_METADATA_AUDIO_ROOT", os.path.join(STYLESINGER_ROOT, "data"))
+STYLE_FEATURE_HARD_GATE = _env_flag("STYLE_FEATURE_HARD_GATE", True)
+STYLE_DEBUG_ARTIFACTS = _env_flag("STYLE_DEBUG_ARTIFACTS", True)
+STYLE_DEBUG_DIR = os.environ.get("STYLE_DEBUG_DIR", os.path.join(BASE_DIR, "runtime/debug"))
 USE_EXPERIMENTAL_ALIGNMENT = _env_flag("USE_EXPERIMENTAL_ALIGNMENT", False)
 USE_EXPERIMENTAL_RMVPE = _env_flag("USE_EXPERIMENTAL_RMVPE", False)
 USE_BREATHE_INSERTION = _env_flag("USE_BREATHE_INSERTION", False)
 USE_AGGRESSIVE_SEGMENT = _env_flag("USE_AGGRESSIVE_SEGMENT", False)
 USE_ITERATIVE_MICRO_MERGE = _env_flag("USE_ITERATIVE_MICRO_MERGE", False)
-USE_HARD_QUALITY_GATE = _env_flag("USE_HARD_QUALITY_GATE", False)
+USE_HARD_QUALITY_GATE = _env_flag("USE_HARD_QUALITY_GATE", STYLE_FEATURE_HARD_GATE)
 
 
 def _prepare_transformers_runtime_for_whisperx() -> None:
@@ -153,6 +173,77 @@ class TaskState:
     message: str
     output_path: str | None = None
     error: str | None = None
+    reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FeatureQualityReport:
+    token_count: int = 0
+    rest_count: int = 0
+    rest_ratio: float = 0.0
+    breathe_count: int = 0
+    breathe_ratio: float = 0.0
+    slur_count: int = 0
+    slur_ratio: float = 0.0
+    micro_token_count: int = 0
+    micro_token_ratio: float = 0.0
+    median_dur: float = 0.0
+    min_dur: float = 0.0
+    max_dur: float = 0.0
+    total_duration: float = 0.0
+    audio_duration: float | None = None
+    duration_mismatch_ratio: float | None = None
+    unknown_phone_count: int = 0
+    merged_count: int = 0
+    sanitized_count: int = 0
+    inserted_breathe_count: int = 0
+    hard_gate_passed: bool = True
+    hard_gate_reasons: list[str] = field(default_factory=list)
+
+
+@dataclass
+class FeatureBundle:
+    name: str
+    ph: list[str]
+    note: list[int]
+    note_dur: list[float]
+    note_type: list[int]
+    source: Literal["metadata", "auto", "legacy"]
+    lyric_text: str | None = None
+    audio_duration: float | None = None
+    total_duration: float = 0.0
+    quality: FeatureQualityReport = field(default_factory=FeatureQualityReport)
+    warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    prompt_text: str = ""
+    metadata_match_info: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        data = asdict(self)
+        data["quality_ok"] = self.quality.hard_gate_passed
+        data["quality_reason"] = "; ".join(self.quality.hard_gate_reasons)
+        data["metrics"] = data["quality"]
+        data["ok"] = self.quality.hard_gate_passed
+        if not self.quality.hard_gate_passed:
+            data["code"] = "FEATURE_QUALITY_GATE_FAILED"
+            data["message"] = "当前提取的四维特征可信度较低，已停止转换。"
+            data["reasons"] = self.quality.hard_gate_reasons
+        return data
+
+
+def _load_phone_set_from_path(phone_set_path: str) -> set[str]:
+    with open(phone_set_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        return {str(x).strip() for x in data if str(x).strip()}
+    if isinstance(data, dict):
+        return {str(x).strip() for x in data.keys() if str(x).strip()}
+    return set()
+
+
+def validate_phones_against_phone_set(ph_list: list[str], phone_set_path: str) -> list[str]:
+    phone_set = _load_phone_set_from_path(phone_set_path)
+    return sorted({str(ph) for ph in ph_list if str(ph) not in phone_set})
 
 
 class StyleSingerService:
@@ -177,6 +268,7 @@ class StyleSingerService:
         self._rmvpe_model = None
         self._polyphone_dict_initialized = False
         self._stylesinger_phone_set = self._load_stylesinger_phone_set()
+        self._stylesinger_metadata_cache: list[dict] | None = None
         self._enhanced_stack_status = {
             "checked": False,
             "ready": False,
@@ -247,6 +339,166 @@ class StyleSingerService:
                 logger.warning("Failed to load StyleSinger phone set from %s: %s", path, exc)
         logger.warning("Use built-in fallback StyleSinger phone set (size=%d)", len(DEFAULT_STYLESINGER_PHONE_SET))
         return set(DEFAULT_STYLESINGER_PHONE_SET)
+
+    def load_stylesinger_metadata(self, metadata_path: str | None = None) -> list[dict]:
+        path = metadata_path or STYLE_METADATA_PATH
+        if self._stylesinger_metadata_cache is not None and path == STYLE_METADATA_PATH:
+            return self._stylesinger_metadata_cache
+        if not path or not os.path.exists(path):
+            logger.info("StyleSinger metadata not found at %s", path)
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                if isinstance(data.get("items"), list):
+                    items = data["items"]
+                else:
+                    items = list(data.values())
+            elif isinstance(data, list):
+                items = data
+            else:
+                items = []
+            items = [item for item in items if isinstance(item, dict)]
+            if path == STYLE_METADATA_PATH:
+                self._stylesinger_metadata_cache = items
+            logger.info("Loaded StyleSinger metadata from %s (items=%d)", path, len(items))
+            return items
+        except Exception as exc:
+            logger.warning("Failed to load StyleSinger metadata from %s: %s", path, exc)
+            return []
+
+    def _metadata_match_keys(self, item: dict) -> set[str]:
+        keys: set[str] = set()
+        for field_name in ("wav_fn", "wav", "audio", "audio_path", "path", "rel_path", "item_name", "name"):
+            value = item.get(field_name)
+            if value is None:
+                continue
+            values = value if isinstance(value, list) else [value]
+            for raw in values:
+                text = str(raw).strip()
+                if not text:
+                    continue
+                base = os.path.basename(text)
+                stem = os.path.splitext(base)[0]
+                keys.update({text, base, stem})
+        return {k.lower() for k in keys if k}
+
+    def find_metadata_item_for_audio(
+        self,
+        audio_path: str,
+        metadata: list[dict],
+        original_filename: str | None = None,
+    ) -> tuple[dict | None, dict]:
+        candidates: set[str] = set()
+        for raw in [audio_path, original_filename or ""]:
+            if not raw:
+                continue
+            base = os.path.basename(str(raw))
+            stem = os.path.splitext(base)[0]
+            candidates.update({str(raw), base, stem})
+        candidates = {c.lower() for c in candidates if c}
+        for idx, item in enumerate(metadata):
+            keys = self._metadata_match_keys(item)
+            matched = sorted(candidates & keys)
+            if matched:
+                return item, {
+                    "matched": True,
+                    "matched_keys": matched,
+                    "metadata_index": idx,
+                    "item_name": item.get("item_name") or item.get("name"),
+                    "metadata_path": STYLE_METADATA_PATH,
+                    "audio_candidates": sorted(candidates),
+                }
+        return None, {
+            "matched": False,
+            "metadata_path": STYLE_METADATA_PATH,
+            "audio_candidates": sorted(candidates),
+        }
+
+    def _first_metadata_list(self, item: dict, names: tuple[str, ...]) -> list | None:
+        for name in names:
+            value = item.get(name)
+            if isinstance(value, list):
+                return value
+        return None
+
+    def _normalize_metadata_phone(self, token: Any) -> str:
+        ph = str(token).strip()
+        if ph.endswith("_zh"):
+            ph = ph[:-3]
+        ph = self._normalize_special_tokens(ph)
+        if ph in {"_SP", "spn", "silence"}:
+            ph = "_NONE"
+        return ph
+
+    def features_from_metadata(
+        self,
+        item: dict,
+        audio_path: str,
+        prompt_text: str = "",
+        match_info: dict | None = None,
+    ) -> FeatureBundle:
+        raw_ph = self._first_metadata_list(item, ("ph", "phones", "phonemes"))
+        raw_note = self._first_metadata_list(item, ("note", "notes", "ep_pitches", "pitches"))
+        raw_dur = self._first_metadata_list(item, ("note_dur", "note_durs", "ep_notedurs", "ph_durs"))
+        raw_type = self._first_metadata_list(item, ("note_type", "note_types", "ep_types", "types"))
+        warnings: list[str] = []
+        errors: list[str] = []
+        if raw_ph is None or raw_note is None or raw_dur is None or raw_type is None:
+            missing = [
+                name
+                for name, value in [("ph", raw_ph), ("note", raw_note), ("note_dur", raw_dur), ("note_type", raw_type)]
+                if value is None
+            ]
+            errors.append(f"Metadata item missing required 4D fields: {missing}")
+            raw_ph, raw_note, raw_dur, raw_type = [], [], [], []
+
+        length_set = {len(raw_ph), len(raw_note), len(raw_dur), len(raw_type)}
+        if len(length_set) != 1:
+            errors.append(
+                f"Metadata feature length mismatch: ph={len(raw_ph)}, note={len(raw_note)}, "
+                f"note_dur={len(raw_dur)}, note_type={len(raw_type)}"
+            )
+
+        min_len = min(len(raw_ph), len(raw_note), len(raw_dur), len(raw_type))
+        ph = [self._normalize_metadata_phone(x) for x in raw_ph[:min_len]]
+        note = [int(float(x)) for x in raw_note[:min_len]]
+        note_dur = [float(x) for x in raw_dur[:min_len]]
+        note_type = [int(float(x)) for x in raw_type[:min_len]]
+
+        for idx, token in enumerate(ph):
+            if token in {"_NONE", "breathe"}:
+                note[idx] = 0
+                note_type[idx] = NOTE_TYPE_REST
+
+        lyric_value = item.get("txt") or item.get("lyrics") or item.get("text")
+        if isinstance(lyric_value, list):
+            lyric_text = "".join(str(x) for x in lyric_value if str(x) not in {"<AP>", "<SP>"})
+        elif lyric_value is None:
+            lyric_text = None
+        else:
+            lyric_text = str(lyric_value)
+
+        audio_duration = self._safe_audio_duration(audio_path)
+        bundle = self._make_feature_bundle(
+            name=str(item.get("item_name") or item.get("name") or os.path.basename(audio_path)),
+            ph=ph,
+            note=note,
+            note_dur=note_dur,
+            note_type=note_type,
+            source="metadata",
+            lyric_text=lyric_text,
+            audio_duration=audio_duration,
+            prompt_text=prompt_text,
+            warnings=warnings,
+            errors=errors,
+            metadata_match_info=match_info or {},
+            sanitized_count=0,
+            merged_count=0,
+            inserted_breathe_count=0,
+        )
+        return bundle
 
     def _ensure_polyphone_dict(self) -> None:
         if self._polyphone_dict_initialized:
@@ -643,17 +895,18 @@ class StyleSingerService:
 
     def _get_feature_extraction_mode(self, is_vocal_only: bool = False, lyrics: str = "") -> str:
         """
-        默认始终走更朴素稳定的 legacy 链。
-        enhanced 仅保留给显式后端策略或内部调试使用，不再做自动切换。
+        STYLE_FEATURE_MODE supports metadata / auto / legacy.
+        FEATURE_EXTRACTION_POLICY=force_enhanced is kept only for old internal tests.
         """
-        policy = (os.environ.get("FEATURE_EXTRACTION_POLICY") or DEFAULT_FEATURE_EXTRACTION_MODE).strip().lower()
-        mode = DEFAULT_FEATURE_EXTRACTION_MODE
+        policy = (os.environ.get("STYLE_FEATURE_MODE") or os.environ.get("FEATURE_EXTRACTION_POLICY") or DEFAULT_FEATURE_EXTRACTION_MODE).strip().lower()
+        mode = policy if policy in {"metadata", "auto", "legacy"} else "auto"
         if policy == "force_enhanced":
             status = self.get_enhanced_stack_status(force_refresh=False)
             if status.get("ready", False):
                 mode = "enhanced"
             else:
-                logger.warning("FEATURE_EXTRACTION_POLICY is force_enhanced but dependencies are missing. Falling back to legacy.")
+                logger.warning("FEATURE_EXTRACTION_POLICY is force_enhanced but dependencies are missing. Falling back to auto.")
+                mode = "auto"
         logger.info("Resolved feature extraction mode internally: %s (policy: %s)", mode, policy)
         return mode
 
@@ -1157,6 +1410,24 @@ class StyleSingerService:
             return current_ph, current_note, current_dur, current_type, total_merged_count
         return current_ph, current_note, current_dur, current_type
 
+    def sanitize_features(
+        self,
+        ph_seq: list[str],
+        note_seq: list[int],
+        dur_seq: list[float],
+        type_seq: list[int],
+    ) -> tuple[list[str], list[int], list[float], list[int], int, int]:
+        ph, note, dur, typ, sanitized_count = self._sanitize_feature_sequences(
+            ph_seq, note_seq, dur_seq, type_seq, return_count=True
+        )
+        ph, note, dur, typ, merged_count = self._merge_micro_segments(
+            ph, note, dur, typ, min_merge_dur=MIN_DUR, return_count=True
+        )
+        ph, note, dur, typ, sanitized_after = self._sanitize_feature_sequences(
+            ph, note, dur, typ, return_count=True
+        )
+        return ph, note, dur, typ, sanitized_count + sanitized_after, merged_count
+
     def _compute_feature_quality_metrics(
         self,
         ph_seq: list[str],
@@ -1166,12 +1437,19 @@ class StyleSingerService:
         sanitized_count: int = 0,
         merged_count: int = 0,
         pre_merge_token_count: int = 0,
+        audio_duration: float | None = None,
+        unknown_phone_count: int = 0,
+        inserted_breathe_count: int = 0,
     ) -> dict:
         token_count = len(ph_seq)
-        rest_count = sum(1 for ph in ph_seq if ph == "_NONE")
+        rest_count = sum(1 for ph, t in zip(ph_seq, type_seq) if ph == "_NONE" or t == NOTE_TYPE_REST)
         breathe_count = sum(1 for ph in ph_seq if ph == "breathe")
-        slur_count = sum(1 for t in type_seq if t == 3)
-        micro_token_count = sum(1 for d in dur_seq if d <= 0.08)
+        slur_count = sum(1 for t in type_seq if t == NOTE_TYPE_SLUR)
+        micro_token_count = sum(1 for d in dur_seq if d < MICRO_DUR)
+        total_duration = float(np.sum(dur_seq)) if dur_seq else 0.0
+        duration_mismatch_ratio = None
+        if audio_duration and audio_duration > 0:
+            duration_mismatch_ratio = abs(total_duration - float(audio_duration)) / float(audio_duration)
         return {
             "pre_merge_token_count": pre_merge_token_count,
             "post_merge_token_count": token_count,
@@ -1187,9 +1465,13 @@ class StyleSingerService:
             "median_dur": float(np.median(dur_seq)) if dur_seq else 0.0,
             "min_dur": float(np.min(dur_seq)) if dur_seq else 0.0,
             "max_dur": float(np.max(dur_seq)) if dur_seq else 0.0,
-            "total_duration": float(np.sum(dur_seq)) if dur_seq else 0.0,
+            "total_duration": total_duration,
+            "audio_duration": float(audio_duration) if audio_duration is not None else None,
+            "duration_mismatch_ratio": duration_mismatch_ratio,
+            "unknown_phone_count": int(unknown_phone_count),
             "sanitized_count": sanitized_count,
             "merged_count": merged_count,
+            "inserted_breathe_count": inserted_breathe_count,
         }
 
     def _log_feature_quality_metrics(self, metrics: dict) -> None:
@@ -1197,31 +1479,204 @@ class StyleSingerService:
             "Feature quality metrics: pre_tokens=%d, post_tokens=%d, rest_ratio=%.3f, breathe_count=%d, breathe_ratio=%.3f, slur_ratio=%.3f, micro_ratio=%.3f, merged=%d, sanitized=%d",
             metrics.get("pre_merge_token_count", metrics.get("token_count", 0)),
             metrics.get("post_merge_token_count", metrics.get("token_count", 0)),
-            metrics["rest_ratio"],
-            metrics["breathe_count"],
-            metrics["breathe_ratio"],
-            metrics["slur_ratio"],
-            metrics["micro_token_ratio"],
-            metrics["merged_count"],
-            metrics["sanitized_count"],
+            metrics.get("rest_ratio", 0.0),
+            metrics.get("breathe_count", 0),
+            metrics.get("breathe_ratio", 0.0),
+            metrics.get("slur_ratio", 0.0),
+            metrics.get("micro_token_ratio", 0.0),
+            metrics.get("merged_count", 0),
+            metrics.get("sanitized_count", 0),
         )
-        if metrics["rest_ratio"] > 0.15:
-            logger.warning("Feature quality warning: rest_ratio too high: %.3f", metrics["rest_ratio"])
-        if metrics["slur_ratio"] > 0.35:
-            logger.warning("Feature quality warning: slur_ratio too high: %.3f", metrics["slur_ratio"])
-        if metrics["micro_token_ratio"] > 0.25:
-            logger.warning("Feature quality warning: too many micro tokens: %.3f", metrics["micro_token_ratio"])
-        if metrics["breathe_count"] == 0 and metrics["total_duration"] > 8.0:
+        if metrics.get("rest_ratio", 0.0) > 0.15:
+            logger.warning("Feature quality warning: rest_ratio too high: %.3f", metrics.get("rest_ratio", 0.0))
+        if metrics.get("slur_ratio", 0.0) > 0.35:
+            logger.warning("Feature quality warning: slur_ratio too high: %.3f", metrics.get("slur_ratio", 0.0))
+        if metrics.get("micro_token_ratio", 0.0) > MAX_MICRO_RATIO:
+            logger.warning("Feature quality warning: too many micro tokens: %.3f", metrics.get("micro_token_ratio", 0.0))
+        if metrics.get("breathe_count", 0) == 0 and metrics.get("total_duration", 0.0) > 8.0:
             logger.warning("Feature quality warning: No breathe tokens detected in a long singing phrase")
 
-    def _evaluate_feature_quality_gate(self, metrics: dict) -> tuple[bool, str]:
-        if metrics["micro_token_ratio"] > 0.25:
+    def _evaluate_feature_quality_gate_detailed(
+        self,
+        metrics: dict,
+        ph_seq: list[str] | None = None,
+        note_seq: list[int] | None = None,
+        dur_seq: list[float] | None = None,
+        type_seq: list[int] | None = None,
+        text_empty: bool = False,
+    ) -> tuple[bool, str, list[str]]:
+        reasons: list[str] = []
+        ph_seq = ph_seq or []
+        note_seq = note_seq or []
+        dur_seq = dur_seq or []
+        type_seq = type_seq or []
+        if ph_seq or note_seq or dur_seq or type_seq:
+            if len({len(ph_seq), len(note_seq), len(dur_seq), len(type_seq)}) != 1:
+                reasons.append(
+                    f"Feature length mismatch: ph={len(ph_seq)}, note={len(note_seq)}, "
+                    f"note_dur={len(dur_seq)}, note_type={len(type_seq)}"
+                )
+        if metrics.get("token_count", 0) == 0:
+            reasons.append("Feature token_count is 0")
+        if metrics.get("unknown_phone_count", 0) > 0:
+            reasons.append(f"Unknown phones for current StyleSinger phone_set: count={metrics.get('unknown_phone_count')}")
+        if metrics.get("micro_token_ratio", 0.0) > MAX_MICRO_RATIO:
+            reasons.append(
+                f"Too many micro segments: micro_ratio={metrics.get('micro_token_ratio', 0.0):.3f} > {MAX_MICRO_RATIO:.2f}"
+            )
+        mismatch = metrics.get("duration_mismatch_ratio")
+        if mismatch is not None and mismatch > 0.15:
+            reasons.append(f"Duration mismatch too large: ratio={mismatch:.3f} > 0.15")
+        audio_duration = metrics.get("audio_duration")
+        if audio_duration and audio_duration > 6.0 and metrics.get("breathe_count", 0) == 0 and metrics.get("rest_count", 0) == 0:
+            reasons.append(f"No breathe/rest token detected in long phrase: duration={audio_duration:.2f}s")
+        elif audio_duration and audio_duration > 6.0 and metrics.get("breathe_count", 0) == 0:
+            reasons.append(f"No breathe token detected in long phrase: duration={audio_duration:.2f}s")
+        if "median_dur" in metrics and metrics.get("median_dur", 0.0) < MIN_DUR:
+            reasons.append(f"Median duration too short: median_dur={metrics.get('median_dur', 0.0):.3f} < {MIN_DUR:.2f}")
+        if "min_dur" in metrics and metrics.get("min_dur", 0.0) <= 0:
+            reasons.append(f"Invalid non-positive duration: min_dur={metrics.get('min_dur', 0.0):.3f}")
+        if "total_duration" in metrics and metrics.get("total_duration", 0.0) <= 0:
+            reasons.append("Invalid total duration: total_duration <= 0")
+        if text_empty:
+            reasons.append("Whisper/G2P automatic lyric text is empty and no metadata was available")
+        if metrics.get("rest_ratio", 0.0) > 0.35:
+            reasons.append(f"Too many rest tokens: rest_ratio={metrics.get('rest_ratio', 0.0):.3f} > 0.35")
+        return len(reasons) == 0, "; ".join(reasons), reasons
+
+    def _evaluate_feature_quality_gate(
+        self,
+        metrics: dict,
+        ph_seq: list[str] | None = None,
+        note_seq: list[int] | None = None,
+        dur_seq: list[float] | None = None,
+        type_seq: list[int] | None = None,
+        text_empty: bool = False,
+    ) -> tuple[bool, str]:
+        if metrics.get("micro_token_ratio", 0.0) > MAX_MICRO_RATIO:
             return False, "Too many micro segments in extracted features"
-        if metrics["rest_ratio"] > 0.18:
+        if metrics.get("rest_ratio", 0.0) > 0.18:
             return False, "Too many rest tokens in extracted features"
-        if metrics["token_count"] < 5:
+        if metrics.get("token_count", 0) < 5:
             return False, "Extracted feature sequence too short or invalid"
-        return True, ""
+        ok, reason, _reasons = self._evaluate_feature_quality_gate_detailed(
+            metrics,
+            ph_seq=ph_seq,
+            note_seq=note_seq,
+            dur_seq=dur_seq,
+            type_seq=type_seq,
+            text_empty=text_empty,
+        )
+        if not ok:
+            if metrics.get("micro_token_ratio", 0.0) > MAX_MICRO_RATIO:
+                return False, "Too many micro segments in extracted features"
+            if metrics.get("rest_ratio", 0.0) > 0.18:
+                return False, "Too many rest tokens in extracted features"
+            if metrics.get("token_count", 0) < 5:
+                return False, "Extracted feature sequence too short or invalid"
+        return ok, reason
+
+    def _safe_audio_duration(self, audio_path: str | None) -> float | None:
+        if not audio_path:
+            return None
+        try:
+            return float(librosa.get_duration(path=audio_path))
+        except Exception as exc:
+            logger.warning("Failed to read audio duration for %s: %s", audio_path, exc)
+            return None
+
+    def _unknown_phones(self, ph_seq: list[str]) -> list[str]:
+        return sorted({ph for ph in ph_seq if ph not in self._stylesinger_phone_set})
+
+    def _make_feature_bundle(
+        self,
+        name: str,
+        ph: list[str],
+        note: list[int],
+        note_dur: list[float],
+        note_type: list[int],
+        source: Literal["metadata", "auto", "legacy"],
+        lyric_text: str | None,
+        audio_duration: float | None,
+        prompt_text: str,
+        warnings: list[str] | None = None,
+        errors: list[str] | None = None,
+        metadata_match_info: dict | None = None,
+        sanitized_count: int = 0,
+        merged_count: int = 0,
+        inserted_breathe_count: int = 0,
+    ) -> FeatureBundle:
+        unknown = self._unknown_phones(ph)
+        metrics = self._compute_feature_quality_metrics(
+            ph,
+            note,
+            note_dur,
+            note_type,
+            sanitized_count=sanitized_count,
+            merged_count=merged_count,
+            pre_merge_token_count=len(ph) + int(merged_count or 0),
+            audio_duration=audio_duration,
+            unknown_phone_count=len(unknown),
+            inserted_breathe_count=inserted_breathe_count,
+        )
+        dur_values = [float(x) for x in (note_dur or [])]
+        total_duration = round(float(sum(dur_values)), 3) if dur_values else 0.0
+        metrics.setdefault("token_count", len(ph or []))
+        metrics.setdefault("rest_count", 0)
+        metrics.setdefault("rest_ratio", 0.0)
+        metrics.setdefault("breathe_count", 0)
+        metrics.setdefault("breathe_ratio", 0.0)
+        metrics.setdefault("slur_count", 0)
+        metrics.setdefault("slur_ratio", 0.0)
+        metrics.setdefault("micro_token_count", 0)
+        metrics.setdefault("micro_token_ratio", 0.0)
+        metrics.setdefault("median_dur", float(np.median(dur_values)) if dur_values else 0.0)
+        metrics.setdefault("min_dur", float(np.min(dur_values)) if dur_values else 0.0)
+        metrics.setdefault("max_dur", float(np.max(dur_values)) if dur_values else 0.0)
+        metrics.setdefault("total_duration", total_duration)
+        metrics.setdefault("audio_duration", audio_duration)
+        metrics.setdefault("duration_mismatch_ratio", 0.0)
+        metrics.setdefault("unknown_phone_count", len(unknown))
+        metrics.setdefault("merged_count", merged_count)
+        metrics.setdefault("sanitized_count", sanitized_count)
+        metrics.setdefault("inserted_breathe_count", inserted_breathe_count)
+        ok, reason, reasons = self._evaluate_feature_quality_gate_detailed(
+            metrics,
+            ph_seq=ph,
+            note_seq=note,
+            dur_seq=note_dur,
+            type_seq=note_type,
+            text_empty=(source in {"auto", "legacy"} and not (lyric_text or "").strip()),
+        )
+        if errors:
+            ok = False
+            reasons = list(reasons) + list(errors)
+            reason = "; ".join(reasons)
+        if unknown:
+            unknown_reason = f"Unknown phones for current StyleSinger phone_set: {unknown}"
+            if unknown_reason not in reasons:
+                reasons.append(unknown_reason)
+            ok = False
+            reason = "; ".join(reasons)
+        metrics["hard_gate_passed"] = ok
+        metrics["hard_gate_reasons"] = reasons
+        quality = FeatureQualityReport(**{k: v for k, v in metrics.items() if k in FeatureQualityReport.__dataclass_fields__})
+        return FeatureBundle(
+            name=name,
+            ph=ph,
+            note=note,
+            note_dur=note_dur,
+            note_type=note_type,
+            source=source,
+            lyric_text=lyric_text,
+            audio_duration=audio_duration,
+            total_duration=metrics.get("total_duration", total_duration),
+            quality=quality,
+            warnings=warnings or [],
+            errors=(errors or []) + ([reason] if reason and not ok and reason not in (errors or []) else []),
+            prompt_text=prompt_text,
+            metadata_match_info=metadata_match_info or {},
+        )
 
     def _detect_and_insert_breathe_tokens(
         self,
@@ -1267,6 +1722,154 @@ class StyleSingerService:
 
         return out_ph, out_note, out_dur, out_type, inserted
 
+    def insert_breathe_from_silence(
+        self,
+        audio_path: str,
+        ph_seq: list[str],
+        note_seq: list[int],
+        dur_seq: list[float],
+        type_seq: list[int],
+    ) -> tuple[list[str], list[int], list[float], list[int], int]:
+        if not os.path.exists(audio_path):
+            return ph_seq, note_seq, dur_seq, type_seq, 0
+        y, sr = librosa.load(audio_path, sr=None, mono=True)
+        audio_duration = len(y) / max(sr, 1)
+        if audio_duration <= 0 or not ph_seq:
+            return ph_seq, note_seq, dur_seq, type_seq, 0
+
+        intervals = librosa.effects.split(y, top_db=28, frame_length=2048, hop_length=512)
+        silence_segments: list[tuple[float, float]] = []
+        cursor = 0.0
+        for start, end in intervals:
+            voiced_start = start / sr
+            voiced_end = end / sr
+            if voiced_start - cursor > 0.18:
+                silence_segments.append((cursor, voiced_start))
+            cursor = max(cursor, voiced_end)
+        if audio_duration - cursor > 0.18:
+            silence_segments.append((cursor, audio_duration))
+        if not silence_segments:
+            return ph_seq, note_seq, dur_seq, type_seq, 0
+
+        rest_token = "breathe" if "breathe" in self._stylesinger_phone_set else "_NONE"
+        out_ph, out_note, out_dur, out_type = list(ph_seq), list(note_seq), list(dur_seq), list(type_seq)
+        inserted = 0
+        cumulative = np.cumsum([0.0] + out_dur).tolist()
+        for start, end in silence_segments:
+            dur = float(np.clip(end - start, 0.18, 0.8))
+            midpoint = (start + end) / 2.0
+            insert_idx = min(range(len(cumulative)), key=lambda idx: abs(cumulative[idx] - midpoint))
+            if insert_idx > 0 and out_ph[insert_idx - 1] in {"_NONE", "breathe"}:
+                continue
+            if insert_idx < len(out_ph) and out_ph[insert_idx] in {"_NONE", "breathe"}:
+                continue
+            out_ph.insert(insert_idx, rest_token)
+            out_note.insert(insert_idx, 0)
+            out_dur.insert(insert_idx, round(dur, 3))
+            out_type.insert(insert_idx, NOTE_TYPE_REST)
+            inserted += 1
+            cumulative = np.cumsum([0.0] + out_dur).tolist()
+        return out_ph, out_note, out_dur, out_type, inserted
+
+    def _debug_dir(self, debug_id: str | None) -> str | None:
+        if not STYLE_DEBUG_ARTIFACTS or not debug_id:
+            return None
+        path = os.path.join(STYLE_DEBUG_DIR, str(debug_id))
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _write_debug_json(self, debug_id: str | None, filename: str, payload: Any) -> None:
+        debug_dir = self._debug_dir(debug_id)
+        if not debug_dir:
+            return
+        try:
+            with open(os.path.join(debug_dir, filename), "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            logger.warning("Failed to write debug artifact %s/%s: %s", debug_dir, filename, exc)
+
+    def _copy_debug_file(self, debug_id: str | None, src: str, filename: str) -> None:
+        debug_dir = self._debug_dir(debug_id)
+        if not debug_dir or not src or not os.path.exists(src):
+            return
+        try:
+            shutil.copyfile(src, os.path.join(debug_dir, filename))
+        except Exception as exc:
+            logger.warning("Failed to copy debug artifact %s -> %s: %s", src, filename, exc)
+
+    def _write_feature_debug_artifacts(
+        self,
+        debug_id: str | None,
+        bundle: FeatureBundle,
+        raw_payload: dict | None = None,
+        selected_metadata_item: dict | None = None,
+    ) -> None:
+        if not debug_id:
+            return
+        data = bundle.to_dict()
+        self._write_debug_json(debug_id, "extracted_features.sanitized.json", data)
+        self._write_debug_json(debug_id, "quality_report.json", asdict(bundle.quality))
+        if raw_payload is not None:
+            self._write_debug_json(debug_id, "extracted_features.raw.json", raw_payload)
+        if selected_metadata_item is not None:
+            self._write_debug_json(debug_id, "selected_metadata_item.json", selected_metadata_item)
+
+    def validate_score_payload(
+        self,
+        score_payload: dict | None,
+        audio_path: str | None = None,
+        prompt_text: str = "",
+        debug_id: str | None = None,
+    ) -> dict:
+        if not score_payload:
+            return {"ok": True, "quality": asdict(FeatureQualityReport()), "reasons": []}
+        original_lengths = {
+            "ph": len(score_payload.get("ph") or []),
+            "note": len(score_payload.get("note") or []),
+            "note_dur": len(score_payload.get("note_dur") or []),
+            "note_type": len(score_payload.get("note_type") or []),
+        }
+        ph, note, dur, typ, sanitized_count = self._sanitize_feature_sequences(
+            score_payload.get("ph", []),
+            score_payload.get("note", []),
+            score_payload.get("note_dur", []),
+            score_payload.get("note_type", []),
+            return_count=True,
+        )
+        audio_duration = self._safe_audio_duration(audio_path)
+        bundle = self._make_feature_bundle(
+            name=os.path.basename(audio_path or "score_payload"),
+            ph=ph,
+            note=note,
+            note_dur=dur,
+            note_type=typ,
+            source="legacy",
+            lyric_text="provided_score_payload",
+            audio_duration=audio_duration,
+            prompt_text=prompt_text,
+            warnings=[],
+            errors=[],
+            metadata_match_info={"from_request_payload": True, "original_lengths": original_lengths},
+            sanitized_count=sanitized_count,
+            merged_count=0,
+            inserted_breathe_count=0,
+        )
+        reasons = list(bundle.quality.hard_gate_reasons)
+        if len(set(original_lengths.values())) != 1:
+            reasons.append(
+                "Feature length mismatch before sanitize: "
+                + ", ".join(f"{k}={v}" for k, v in original_lengths.items())
+            )
+            bundle.quality.hard_gate_passed = False
+            bundle.quality.hard_gate_reasons = reasons
+        self._write_feature_debug_artifacts(debug_id, bundle, raw_payload={"score_payload": score_payload, "prompt_text": prompt_text})
+        return {"ok": bundle.quality.hard_gate_passed, "quality": asdict(bundle.quality), "reasons": reasons, "features_preview": {
+            "ph": ph[:24],
+            "note": note[:24],
+            "note_dur": dur[:24],
+            "note_type": typ[:24],
+        }}
+
     def process_task(
         self,
         task_id: str,
@@ -1278,18 +1881,38 @@ class StyleSingerService:
         is_vocal_only: bool = False,
     ):
         task = self._tasks[task_id]
+        self._write_debug_json(task_id, "request.json", {
+            "task_id": task_id,
+            "prompt_text": text_prompt,
+            "style_strength": style_strength,
+            "ref_audio_path": ref_audio_path,
+            "is_vocal_only": is_vocal_only,
+            "score_payload_present": bool(score_payload),
+        })
+        self._copy_debug_file(task_id, ref_audio_path, "input.wav")
+        self._write_debug_json(task_id, "selected_ref_audio.txt", {"ref_audio_path": ref_audio_path, "prompt_text": text_prompt})
 
         if score_payload:
-            seq_ph, seq_note, seq_dur, seq_type = self._sanitize_feature_sequences(
-                score_payload.get("ph", []),
-                score_payload.get("note", []),
-                score_payload.get("note_dur", []),
-                score_payload.get("note_type", []),
+            validation = self.validate_score_payload(
+                score_payload,
+                audio_path=ref_audio_path,
+                prompt_text=text_prompt,
+                debug_id=task_id,
             )
-            gate_metrics = self._compute_feature_quality_metrics(seq_ph, seq_note, seq_dur, seq_type)
-            allow_generation, quality_reason = self._evaluate_feature_quality_gate(gate_metrics)
-            if not allow_generation:
-                logger.warning("Quality gate soft warning during task processing: %s", quality_reason)
+            if not validation["ok"]:
+                logger.warning("Quality gate failed during task processing: %s", validation["reasons"])
+                task.status = "failed"
+                task.message = "当前提取的四维特征可信度较低，已停止转换。"
+                task.reasons = validation["reasons"]
+                task.error = json.dumps({
+                    "code": "FEATURE_QUALITY_GATE_FAILED",
+                    "message": task.message,
+                    "reasons": validation["reasons"],
+                    "quality": validation["quality"],
+                }, ensure_ascii=False)
+                self._write_debug_json(task_id, "error.json", json.loads(task.error))
+                if STYLE_FEATURE_HARD_GATE:
+                    return
 
         if self._should_run_demucs(ref_audio_path, is_vocal_only=is_vocal_only):
             task.status = "separating_vocals"
@@ -1317,10 +1940,12 @@ class StyleSingerService:
             task.status = "completed"
             task.message = "转换完成"
             task.output_path = output_path
+            self._copy_debug_file(task_id, output_path, "converted.wav")
         except Exception as e:
             task.status = "failed"
             task.message = "转换失败"
             task.error = f"{e}\n{traceback.format_exc()}"
+            self._write_debug_json(task_id, "error.json", {"message": str(e), "traceback": traceback.format_exc()})
 
     def synthesize(
         self,
@@ -1429,6 +2054,9 @@ print("###JSON_END###")
         prompt_text: str = "",
         is_vocal_only: bool = False,
         transcript_hint: str | None = None,
+        debug_id: str | None = None,
+        original_filename: str | None = None,
+        feature_mode: str | None = None,
     ) -> dict:
         """
         面向中文歌曲的 4D 提取链：
@@ -1441,8 +2069,57 @@ print("###JSON_END###")
             "extract_features received prompt_text='%s'. prompt_text is reserved for compatibility but no longer scales extracted duration.",
             prompt_text,
         )
-        feature_mode = self._get_feature_extraction_mode(is_vocal_only=is_vocal_only, lyrics=transcript_hint or "")
-        strict_enhanced = feature_mode == "enhanced"
+        if prompt_text.strip():
+            logger.info("prompt_text received but no style reference retrieval configured; using default ref_audio")
+        resolved_mode = (feature_mode or self._get_feature_extraction_mode(is_vocal_only=is_vocal_only, lyrics=transcript_hint or "")).strip().lower()
+        if resolved_mode not in {"metadata", "auto", "legacy", "enhanced"}:
+            resolved_mode = "auto"
+        strict_enhanced = resolved_mode == "enhanced"
+        source: Literal["metadata", "auto", "legacy"] = "legacy" if resolved_mode == "legacy" else "auto"
+
+        self._copy_debug_file(debug_id, audio_path, "input.wav")
+        self._write_debug_json(debug_id, "request.json", {
+            "audio_path": audio_path,
+            "original_filename": original_filename,
+            "prompt_text": prompt_text,
+            "is_vocal_only": is_vocal_only,
+            "lyrics": transcript_hint or "",
+            "feature_mode": resolved_mode,
+        })
+
+        if resolved_mode in {"metadata", "auto"}:
+            metadata = self.load_stylesinger_metadata()
+            metadata_item, match_info = self.find_metadata_item_for_audio(
+                audio_path,
+                metadata,
+                original_filename=original_filename,
+            )
+            if metadata_item is not None:
+                bundle = self.features_from_metadata(
+                    metadata_item,
+                    audio_path=audio_path,
+                    prompt_text=prompt_text,
+                    match_info=match_info,
+                )
+                self._log_feature_quality_metrics(asdict(bundle.quality))
+                self._write_feature_debug_artifacts(
+                    debug_id,
+                    bundle,
+                    raw_payload={
+                        "source": "metadata",
+                        "metadata_match_info": match_info,
+                        "ph": metadata_item.get("ph") or metadata_item.get("phones") or metadata_item.get("phonemes"),
+                        "note": metadata_item.get("note") or metadata_item.get("notes") or metadata_item.get("ep_pitches"),
+                        "note_dur": metadata_item.get("note_dur") or metadata_item.get("note_durs") or metadata_item.get("ep_notedurs") or metadata_item.get("ph_durs"),
+                        "note_type": metadata_item.get("note_type") or metadata_item.get("note_types") or metadata_item.get("ep_types"),
+                        "prompt_text": prompt_text,
+                    },
+                    selected_metadata_item=metadata_item,
+                )
+                return bundle.to_dict()
+            logger.info("No metadata match found for uploaded audio, fallback to auto extraction")
+            self._write_debug_json(debug_id, "selected_metadata_item.json", {"matched": False, "metadata_match_info": match_info})
+
         if strict_enhanced:
             self._validate_enhanced_feature_stack()
 
@@ -1732,32 +2409,36 @@ print("###JSON_END###")
         output_ph, output_note, output_dur, output_type, sanitized_count = self._sanitize_feature_sequences(
             final_ph[:min_len], final_note[:min_len], final_dur[:min_len], final_type[:min_len], return_count=True
         )
+        raw_payload = {
+            "source": source,
+            "ph": output_ph,
+            "note": output_note,
+            "note_dur": output_dur,
+            "note_type": output_type,
+            "lyric_text": lyric_text,
+            "audio_duration": total_duration,
+            "prompt_text": prompt_text,
+        }
         pre_merge_token_count = len(output_ph)
         merged_count = 0
-        breathe_count = 0
+        inserted_breathe_count = 0
 
-        if strict_enhanced and USE_ITERATIVE_MICRO_MERGE:
-            output_ph, output_note, output_dur, output_type, merged_count = self._merge_micro_segments(
-                output_ph, output_note, output_dur, output_type, return_count=True
-            )
-            output_ph, output_note, output_dur, output_type, sanitized_after_merge = self._sanitize_feature_sequences(
-                output_ph, output_note, output_dur, output_type, return_count=True
-            )
-            sanitized_count += sanitized_after_merge
+        output_ph, output_note, output_dur, output_type, sanitized_after, merged_count = self.sanitize_features(
+            output_ph, output_note, output_dur, output_type
+        )
+        sanitized_count += sanitized_after
 
-        if strict_enhanced and USE_BREATHE_INSERTION:
-            output_ph, output_note, output_dur, output_type, breathe_count = self._detect_and_insert_breathe_tokens(
-                prepared_audio_path,
-                output_ph,
-                output_note,
-                output_dur,
-                output_type,
-                _word_spans=words_info,
-            )
-            output_ph, output_note, output_dur, output_type, sanitized_after_breathe = self._sanitize_feature_sequences(
-                output_ph, output_note, output_dur, output_type, return_count=True
-            )
-            sanitized_count += sanitized_after_breathe
+        output_ph, output_note, output_dur, output_type, inserted_breathe_count = self.insert_breathe_from_silence(
+            prepared_audio_path,
+            output_ph,
+            output_note,
+            output_dur,
+            output_type,
+        )
+        output_ph, output_note, output_dur, output_type, sanitized_after_breathe = self._sanitize_feature_sequences(
+            output_ph, output_note, output_dur, output_type, return_count=True
+        )
+        sanitized_count += sanitized_after_breathe
 
         metrics = self._compute_feature_quality_metrics(
             output_ph,
@@ -1767,27 +2448,47 @@ print("###JSON_END###")
             sanitized_count=sanitized_count,
             merged_count=merged_count,
             pre_merge_token_count=pre_merge_token_count,
+            audio_duration=total_duration,
+            unknown_phone_count=len(self._unknown_phones(output_ph)),
+            inserted_breathe_count=inserted_breathe_count,
         )
-        metrics["breathe_count"] = max(metrics["breathe_count"], breathe_count)
+        metrics["breathe_count"] = max(metrics["breathe_count"], inserted_breathe_count)
         metrics["breathe_ratio"] = metrics["breathe_count"] / metrics["token_count"] if metrics["token_count"] else 0.0
         self._log_feature_quality_metrics(metrics)
-        quality_ok, quality_reason = self._evaluate_feature_quality_gate(metrics)
+        quality_ok, quality_reason, quality_reasons = self._evaluate_feature_quality_gate_detailed(
+            metrics,
+            ph_seq=output_ph,
+            note_seq=output_note,
+            dur_seq=output_dur,
+            type_seq=output_type,
+            text_empty=not lyric_text.strip(),
+        )
         if quality_ok:
-            logger.info("Feature quality soft gate passed")
+            logger.info("Feature quality gate passed")
         else:
-            logger.warning("Feature quality soft gate warning: %s", quality_reason)
-            if USE_HARD_QUALITY_GATE and strict_enhanced:
-                logger.warning("Hard quality gate is enabled for enhanced mode")
-        
-        return {
-            "ph": output_ph,
-            "note": output_note,
-            "note_dur": output_dur,
-            "note_type": output_type,
-            "quality_ok": quality_ok,
-            "quality_reason": quality_reason,
-            "metrics": metrics,
-        }
+            logger.warning("Feature quality gate failed: %s", quality_reason)
+
+        metrics["hard_gate_passed"] = quality_ok
+        metrics["hard_gate_reasons"] = quality_reasons
+        quality = FeatureQualityReport(**{k: v for k, v in metrics.items() if k in FeatureQualityReport.__dataclass_fields__})
+        bundle = FeatureBundle(
+            name=os.path.basename(original_filename or audio_path),
+            ph=output_ph,
+            note=output_note,
+            note_dur=output_dur,
+            note_type=output_type,
+            source=source,
+            lyric_text=lyric_text,
+            audio_duration=total_duration,
+            total_duration=metrics["total_duration"],
+            quality=quality,
+            warnings=[] if quality_ok else quality_reasons,
+            errors=[] if quality_ok else quality_reasons,
+            prompt_text=prompt_text,
+            metadata_match_info={"matched": False, "metadata_path": STYLE_METADATA_PATH},
+        )
+        self._write_feature_debug_artifacts(debug_id, bundle, raw_payload=raw_payload)
+        return bundle.to_dict()
 
     def _sanitize_feature_sequences(self, ph_seq: list, note_seq: list, dur_seq: list, type_seq: list, return_count: bool = False):
         """
@@ -1890,7 +2591,7 @@ print("###JSON_END###")
             ref_dur = librosa.get_duration(path=ref_audio_path)
             base_total = sum(base_note_dur)
             target_scale = float(np.clip(ref_dur / max(base_total, 1e-4), 0.75, 2.4))
-            style_scale = 1.0 + (profile["duration_scale"] - 1.0) * float(np.clip(style_strength, 0.0, 1.0))
+            style_scale = 1.0
             note_dur_scaled = [float(np.clip(d * target_scale * style_scale, 0.06, 1.8)) for d in base_note_dur]
         inp = {
             "name": "prompt_singer",

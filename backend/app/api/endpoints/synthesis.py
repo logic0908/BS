@@ -1,6 +1,7 @@
 
 import os
 import logging
+import json
 # Must import multiprocess and set start method before torch or any cuda stuff is initialized
 import multiprocessing as mp
 try:
@@ -10,8 +11,11 @@ except RuntimeError:
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form, BackgroundTasks, Request
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 import shutil
-from app.models_svc.stylesinger_wrapper import stylesinger_service
+from app.models_svc.stylesinger_wrapper import STYLE_FEATURE_HARD_GATE, stylesinger_service
+from app.services.system_status import collect_app_health, collect_sovits_check
+from app.services.svc_task_service import svc_task_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -22,6 +26,14 @@ OUTPUT_DIR = os.path.join(BASE_DIR, "data/processed")
 
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+class ConvertRequest(BaseModel):
+    vocals_id: str
+    prompt_text: str
+    style_strength: float = 0.6
+    style_preset_id: str | None = None
+    engine: str = "sovits"
 
 
 def _save_upload_file(upload: UploadFile, task_id: str, prefix: str = "input") -> str:
@@ -82,9 +94,26 @@ def _log_soft_quality_gate(score_payload: dict | None) -> None:
         score_payload.get("note_type", []),
     )
     gate_metrics = stylesinger_service._compute_feature_quality_metrics(seq_ph, seq_note, seq_dur, seq_type)
-    allow_generation, quality_reason = stylesinger_service._evaluate_feature_quality_gate(gate_metrics)
+    allow_generation, quality_reason, _reasons = stylesinger_service._evaluate_feature_quality_gate_detailed(
+        gate_metrics,
+        ph_seq=seq_ph,
+        note_seq=seq_note,
+        dur_seq=seq_dur,
+        type_seq=seq_type,
+    )
     if not allow_generation:
         logger.warning("Soft quality gate warning for synthesis request: %s | metrics=%s", quality_reason, gate_metrics)
+
+
+def _feature_gate_detail(validation: dict) -> dict:
+    return {
+        "ok": False,
+        "code": "FEATURE_QUALITY_GATE_FAILED",
+        "message": "当前提取的四维特征可信度较低，已停止转换。",
+        "reasons": validation.get("reasons", []),
+        "quality": validation.get("quality", {}),
+        "features_preview": validation.get("features_preview", {}),
+    }
 
 
 def _enhanced_error_detail(
@@ -100,6 +129,62 @@ def _enhanced_error_detail(
     }
 
 
+def _normalize_svc_task_payload(task_id: str, task) -> dict:
+    result_url = f"/api/v1/tasks/{task_id}/result" if task.status == "succeeded" else None
+    result_metadata = dict(task.engine_details or {})
+    return {
+        "task_id": task.task_id,
+        "engine": task.engine,
+        "status": task.status,
+        "progress": getattr(task, "progress", 0),
+        "stage": getattr(task, "stage", "uploaded"),
+        "message": task.message,
+        "selected_style": task.selected_style,
+        "result_url": result_url,
+        "error": task.error,
+        "inference_mode": task.inference_mode,
+        "engine_details": task.engine_details,
+        "result_metadata": result_metadata,
+        "mock_enabled": result_metadata.get("mock_enabled"),
+        "model_path": result_metadata.get("model_path"),
+        "config_path": result_metadata.get("config_path"),
+        "speaker": result_metadata.get("speaker"),
+        "device": result_metadata.get("device"),
+        "selected_output": result_metadata.get("selected_output"),
+        "final_output_path": result_metadata.get("final_output_path"),
+        "return_code": result_metadata.get("return_code"),
+        "elapsed_seconds": result_metadata.get("elapsed_seconds"),
+        "sovits_command_debug_path": result_metadata.get("sovits_command_debug_path"),
+        "reasons": getattr(task, "reasons", []),
+        "legacy_status": "completed" if task.status == "succeeded" else task.status,
+    }
+
+
+def _normalize_stylesinger_task_payload(task_id: str, task) -> dict:
+    status_map = {
+        "queued": ("queued", 0, "uploaded"),
+        "separating_vocals": ("running", 35, "separated"),
+        "running": ("running", 85, "inference_running"),
+        "completed": ("succeeded", 100, "completed"),
+        "failed": ("failed", 100, "failed"),
+    }
+    status, progress, stage = status_map.get(task.status, ("running", 50, "inference_running"))
+    result_url = f"/api/v1/tasks/{task_id}/result" if task.status == "completed" else None
+    return {
+        "task_id": task.task_id,
+        "engine": "stylesinger",
+        "status": status,
+        "progress": progress,
+        "stage": stage,
+        "message": task.message,
+        "selected_style": None,
+        "result_url": result_url,
+        "error": task.error,
+        "reasons": getattr(task, "reasons", []),
+        "legacy_status": task.status,
+    }
+
+
 @router.get("/health")
 async def health(request: Request):
     stack = getattr(request.app.state, "enhanced_stack_status", stylesinger_service.get_enhanced_stack_status())
@@ -107,7 +192,18 @@ async def health(request: Request):
         "status": "ok",
         "service": "stylesinger-backend",
         "enhanced_ready": stack.get("ready", False),
+        "ok": True,
     }
+
+
+@router.get("/system/health")
+async def system_health():
+    return collect_app_health()
+
+
+@router.get("/system/sovits-check")
+async def system_sovits_check():
+    return collect_sovits_check()
 
 
 @router.get("/capabilities")
@@ -119,6 +215,7 @@ async def capabilities(request: Request):
             "legacy_ready": True,
             "enhanced_ready": stack.get("ready", False),
             "default_mode": stack.get("mode_default", "legacy"),
+            "style_feature_hard_gate": STYLE_FEATURE_HARD_GATE,
             "missing_dependencies": stack.get("missing", []),
             "numpy_version": details.get("numpy_version", ""),
             "tensorflow_installed": details.get("tensorflow_installed", False),
@@ -137,9 +234,53 @@ async def capabilities(request: Request):
     }
 
 
+@router.post("/upload")
+async def upload_audio(
+    audio: UploadFile = File(...),
+    is_vocal_only: bool = Form(False),
+):
+    try:
+        vocals_id = str(os.urandom(8).hex())
+        input_path = _save_upload_file(audio, vocals_id, "upload")
+        upload_record = svc_task_service.create_upload(input_path, is_vocal_only=is_vocal_only)
+        return {
+            "vocals_id": upload_record.vocals_id,
+            "status": "ready",
+            "is_vocal_only": upload_record.is_vocal_only,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"上传音频失败: {exc}") from exc
+
+
+@router.post("/convert")
+async def convert_audio(
+    request: ConvertRequest,
+    background_tasks: BackgroundTasks,
+):
+    upload = svc_task_service.get_upload(request.vocals_id)
+    if upload is None:
+        raise HTTPException(status_code=404, detail="vocals_id not found")
+
+    task_id = svc_task_service.create_task(request.vocals_id, engine=request.engine or "sovits")
+    background_tasks.add_task(
+        svc_task_service.process_task,
+        task_id=task_id,
+        prompt_text=request.prompt_text,
+        style_strength=request.style_strength,
+        style_preset_id=request.style_preset_id,
+    )
+    return {
+        "task_id": task_id,
+        "status": "queued",
+        "engine": request.engine or "sovits",
+    }
+
+
 @router.post("/synthesize")
 async def synthesize_voice(
     text: str = Form(...),
+    prompt_text: str = Form(""),
+    style_prompt: str = Form(""),
     style_strength: float = Form(0.6),
     ph_seq: str | None = Form(None),
     note_seq: str | None = Form(None),
@@ -148,17 +289,26 @@ async def synthesize_voice(
     is_vocal_only: bool = Form(False),
     ref_audio: UploadFile = File(...),
 ):
+    text_prompt = prompt_text or style_prompt or text
+    logger.info("synthesize received prompt_text='%s'", text_prompt)
     score_payload = _build_score_payload(ph_seq, note_seq, note_dur_seq, note_type_seq)
-    _log_soft_quality_gate(score_payload)
 
     try:
         task_id = stylesinger_service.create_task()
         ref_path = _save_upload_file(ref_audio, task_id, "ref")
+        validation = stylesinger_service.validate_score_payload(
+            score_payload,
+            audio_path=ref_path,
+            prompt_text=text_prompt,
+            debug_id=task_id,
+        )
+        if score_payload and not validation["ok"] and STYLE_FEATURE_HARD_GATE:
+            raise HTTPException(status_code=422, detail=_feature_gate_detail(validation))
         output_path = _task_output_path(task_id)
         stylesinger_service.process_task(
             task_id=task_id,
             style_strength=style_strength,
-            text_prompt=text,
+            text_prompt=text_prompt,
             ref_audio_path=ref_path,
             output_path=output_path,
             score_payload=score_payload,
@@ -194,35 +344,54 @@ async def synthesize_voice(
 async def extract_features(
     audio: UploadFile = File(...),
     prompt_text: str = Form(""),
+    style_prompt: str = Form(""),
     is_vocal_only: bool = Form(False),
     lyrics: str = Form(""),
+    feature_mode: str | None = Form(None),
 ):
     """
     提取音频特征（音素、音高、时值、类型）
     前端上传源音频后，调用此接口一键回填。
     """
-    from fastapi.concurrency import run_in_threadpool
     try:
+        prompt = prompt_text or style_prompt
+        logger.info("extract_features received prompt_text='%s'", prompt)
         task_id = stylesinger_service.create_task()
         audio_path = _save_upload_file(audio, task_id, "extract")
         
-        features = await run_in_threadpool(
-            stylesinger_service.extract_features,
+        features = stylesinger_service.extract_features(
             audio_path,
-            prompt_text,
+            prompt,
             is_vocal_only,
             lyrics,
+            task_id,
+            audio.filename,
+            feature_mode,
         )
         
         # 格式化为前端期望的逗号分隔字符串格式
+        feature_values = features.get("features") if isinstance(features.get("features"), dict) else features
+        quality = features.get("quality") or features.get("metrics") or {}
         formatted_features = {
-            "ph": ",".join(str(x) for x in features["ph"]),
-            "note": ",".join(str(x) for x in features["note"]),
-            "note_dur": ",".join(str(x) for x in features["note_dur"]),
-            "note_type": ",".join(str(x) for x in features["note_type"]),
+            "ok": features.get("ok", features.get("quality_ok", True)),
+            "hard_gate_enabled": STYLE_FEATURE_HARD_GATE,
+            "code": features.get("code"),
+            "message": features.get("message"),
+            "reasons": features.get("reasons", quality.get("hard_gate_reasons", [])),
+            "source": features.get("source", "legacy"),
+            "ph": ",".join(str(x) for x in feature_values["ph"]),
+            "note": ",".join(str(x) for x in feature_values["note"]),
+            "note_dur": ",".join(str(x) for x in feature_values["note_dur"]),
+            "note_type": ",".join(str(x) for x in feature_values["note_type"]),
             "quality_ok": features.get("quality_ok", True),
             "quality_reason": features.get("quality_reason", ""),
-            "metrics": features.get("metrics", {}),
+            "quality": quality,
+            "metrics": quality,
+            "features": features,
+            "debug_artifacts": {
+                "extracted_features": f"/runtime/debug/{task_id}/extracted_features.sanitized.json",
+                "quality_report": f"/runtime/debug/{task_id}/quality_report.json",
+            },
         }
         
         # 立即清理临时文件
@@ -234,8 +403,6 @@ async def extract_features(
         raise
     except Exception as e:
         import traceback
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"特征提取失败: {e}\n{traceback.format_exc()}")
         # 如果文件存在，也要清理
         if 'audio_path' in locals() and os.path.exists(audio_path):
@@ -324,6 +491,8 @@ print("###JSON_END###")
 async def create_synthesis_task(
     background_tasks: BackgroundTasks,
     text: str = Form(...),
+    prompt_text: str = Form(""),
+    style_prompt: str = Form(""),
     style_strength: float = Form(0.6),
     ph_seq: str | None = Form(None),
     note_seq: str | None = Form(None),
@@ -332,17 +501,33 @@ async def create_synthesis_task(
     is_vocal_only: bool = Form(False),
     ref_audio: UploadFile = File(...),
 ):
+    text_prompt = prompt_text or style_prompt or text
+    logger.info("create task received prompt_text='%s'", text_prompt)
     score_payload = _build_score_payload(ph_seq, note_seq, note_dur_seq, note_type_seq)
-    _log_soft_quality_gate(score_payload)
 
     task_id = stylesinger_service.create_task()
     ref_path = _save_upload_file(ref_audio, task_id, "ref")
+    validation = stylesinger_service.validate_score_payload(
+        score_payload,
+        audio_path=ref_path,
+        prompt_text=text_prompt,
+        debug_id=task_id,
+    )
+    if score_payload and not validation["ok"] and STYLE_FEATURE_HARD_GATE:
+        task = stylesinger_service.get_task(task_id)
+        if task is not None:
+            task.status = "failed"
+            task.message = "当前提取的四维特征可信度较低，已停止转换。"
+            task.reasons = validation.get("reasons", [])
+            task.error = json.dumps(_feature_gate_detail(validation), ensure_ascii=False)
+        stylesinger_service._write_debug_json(task_id, "error.json", _feature_gate_detail(validation))
+        raise HTTPException(status_code=422, detail=_feature_gate_detail(validation))
     output_path = _task_output_path(task_id)
     background_tasks.add_task(
         stylesinger_service.process_task,
         task_id=task_id,
         style_strength=style_strength,
-        text_prompt=text,
+        text_prompt=text_prompt,
         ref_audio_path=ref_path,
         output_path=output_path,
         score_payload=score_payload,
@@ -353,24 +538,52 @@ async def create_synthesis_task(
 
 @router.get("/tasks/{task_id}")
 async def get_task_status(task_id: str):
+    task = svc_task_service.get_task(task_id)
+    if task is not None:
+        return _normalize_svc_task_payload(task_id, task)
+
     task = stylesinger_service.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
-    result_url = f"/api/v1/tasks/{task_id}/result" if task.status == "completed" else None
-    return {
-        "task_id": task.task_id,
-        "status": task.status,
-        "message": task.message,
-        "result_url": result_url,
-        "error": task.error,
-    }
+    return _normalize_stylesinger_task_payload(task_id, task)
 
 
 @router.get("/tasks/{task_id}/result")
 async def get_task_result(task_id: str):
+    task = svc_task_service.get_task(task_id)
+    if task is not None:
+        if task.status == "failed":
+            detail = {"message": task.message, "error": task.error, "reasons": getattr(task, "reasons", [])}
+            raise HTTPException(status_code=409, detail=detail)
+        if task.status != "succeeded" or not task.output_path or not os.path.exists(task.output_path):
+            raise HTTPException(status_code=409, detail="task not completed")
+        metadata = dict(task.engine_details or {})
+        headers = {
+            "X-SVC-Inference-Mode": str(metadata.get("inference_mode") or task.inference_mode or ""),
+            "X-SVC-Mock-Enabled": str(metadata.get("mock_enabled") if metadata.get("mock_enabled") is not None else ""),
+            "X-SVC-Model-Path": str(metadata.get("model_path") or ""),
+            "X-SVC-Config-Path": str(metadata.get("config_path") or ""),
+            "X-SVC-Speaker": str(metadata.get("speaker") or ""),
+            "X-SVC-Device": str(metadata.get("device") or ""),
+            "X-SVC-Selected-Output": str(metadata.get("selected_output") or ""),
+            "X-SVC-Final-Output-Path": str(metadata.get("final_output_path") or task.output_path or ""),
+            "X-SVC-Return-Code": str(metadata.get("return_code") if metadata.get("return_code") is not None else ""),
+            "X-SVC-Elapsed-Seconds": str(metadata.get("elapsed_seconds") if metadata.get("elapsed_seconds") is not None else ""),
+            "X-SVC-Command-Debug-Path": str(metadata.get("sovits_command_debug_path") or ""),
+        }
+        return FileResponse(
+            task.output_path,
+            media_type="audio/wav",
+            filename=os.path.basename(task.output_path),
+            headers=headers,
+        )
+
     task = stylesinger_service.get_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="task not found")
+    if task.status == "failed":
+        detail = {"message": task.message, "error": task.error, "reasons": getattr(task, "reasons", [])}
+        raise HTTPException(status_code=409, detail=detail)
     if task.status != "completed" or not task.output_path or not os.path.exists(task.output_path):
         raise HTTPException(status_code=409, detail="task not completed")
     return FileResponse(task.output_path, media_type="audio/wav", filename=os.path.basename(task.output_path))
