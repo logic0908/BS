@@ -22,14 +22,20 @@ class SvcModelPreset:
     preset_id: str
     display_name: str
     description: str
+    style_tags: tuple[str, ...]
     model_path: str
     config_path: str
     speaker: str
     device: str = "cuda"
+    is_configured: bool = False
     is_demo_quality: bool = False
+    smoke_test_passed: bool = False
     is_technical_validation_only: bool = False
     source_repo: str = ""
+    source_url: str = ""
     license: str = ""
+    install_report_path: str = ""
+    notes: str = ""
     transpose: int = 0
 
     @property
@@ -45,33 +51,46 @@ class SvcModelPreset:
             "model_preset_id": self.preset_id,
             "model_display_name": self.display_name,
             "model_description": self.description,
+            "style_tags": list(self.style_tags),
             "model_path": self.model_path,
             "config_path": self.config_path,
             "speaker": self.speaker,
             "device": self.device,
             "transpose": self.transpose,
             "source_repo": self.source_repo,
+            "source_url": self.source_url,
             "license": self.license,
+            "install_report_path": self.install_report_path,
+            "notes": self.notes,
             "model_path_basename": self.model_path_basename,
             "config_path_basename": self.config_path_basename,
+            "is_configured": self.is_configured,
             "is_demo_quality": self.is_demo_quality,
+            "smoke_test_passed": self.smoke_test_passed,
             "is_technical_validation_only": self.is_technical_validation_only,
         }
 
     def readiness(self) -> dict[str, Any]:
         model_exists = bool(self.model_path and Path(self.model_path).exists())
         config_exists = bool(self.config_path and Path(self.config_path).exists())
+        ready = self.is_configured and self.smoke_test_passed and model_exists and config_exists and bool(self.speaker)
         return {
             "preset_id": self.preset_id,
             "display_name": self.display_name,
-            "ready": model_exists and config_exists and bool(self.speaker),
+            "style_tags": list(self.style_tags),
+            "ready": ready,
             "model_exists": model_exists,
             "config_exists": config_exists,
             "speaker": self.speaker,
             "source_repo": self.source_repo,
+            "source_url": self.source_url,
             "license": self.license,
+            "is_configured": self.is_configured,
             "is_demo_quality": self.is_demo_quality,
+            "smoke_test_passed": self.smoke_test_passed,
             "is_technical_validation_only": self.is_technical_validation_only,
+            "install_report_path": self.install_report_path,
+            "notes": self.notes,
         }
 
 
@@ -82,7 +101,8 @@ def load_presets_payload() -> dict[str, Any]:
         payload = json.load(handle)
     if not isinstance(payload, dict):
         raise ValueError("svc_model_presets.json root must be an object")
-    payload.setdefault("active_preset_id", "tech_villager")
+    active_preset_id = str(payload.get("active_preset_id") or "").strip() or "final_primary"
+    payload["active_preset_id"] = active_preset_id
     payload.setdefault("fallback_preset_id", "tech_villager")
     payload.setdefault("presets", [])
     return payload
@@ -101,25 +121,39 @@ def load_presets() -> dict[str, SvcModelPreset]:
             preset_id=preset_id,
             display_name=str(raw.get("display_name") or preset_id),
             description=str(raw.get("description") or ""),
+            style_tags=tuple(str(tag).strip() for tag in (raw.get("style_tags") or []) if str(tag).strip()),
             model_path=str(raw.get("model_path") or ""),
             config_path=str(raw.get("config_path") or ""),
             speaker=str(raw.get("speaker") or ""),
             device=str(raw.get("device") or "cuda"),
+            is_configured=bool(raw.get("is_configured")),
             is_demo_quality=bool(raw.get("is_demo_quality")),
+            smoke_test_passed=bool(raw.get("smoke_test_passed")),
             is_technical_validation_only=bool(raw.get("is_technical_validation_only")),
             source_repo=str(raw.get("source_repo") or ""),
+            source_url=str(raw.get("source_url") or ""),
             license=str(raw.get("license") or ""),
+            install_report_path=str(raw.get("install_report_path") or ""),
+            notes=str(raw.get("notes") or ""),
             transpose=int(raw.get("transpose", 0) or 0),
         )
     return presets
 
 
 def active_preset_id() -> str:
-    return str(load_presets_payload().get("active_preset_id") or "tech_villager")
+    preset_id = str(load_presets_payload().get("active_preset_id") or "final_primary")
+    return preset_id
 
 
 def fallback_preset_id() -> str:
     return str(load_presets_payload().get("fallback_preset_id") or "tech_villager")
+
+
+def get_preset(preset_id: str | None) -> SvcModelPreset | None:
+    selected_id = str(preset_id or "").strip()
+    if not selected_id:
+        return None
+    return load_presets().get(selected_id)
 
 
 def resolve_preset(preset_id: str | None = None) -> SvcModelPreset | None:
@@ -156,19 +190,44 @@ def collect_presets_status() -> dict[str, Any]:
 
 def _default_payload() -> dict[str, Any]:
     return {
-        "active_preset_id": "tech_villager",
+        "active_preset_id": "final_primary",
         "fallback_preset_id": "tech_villager",
         "presets": [
+            {
+                "preset_id": "final_primary",
+                "display_name": "最终演示 So-VITS-SVC 模型",
+                "description": "用于毕业设计默认演示的目标歌声转换模型。",
+                "style_tags": ["baseline", "demo", "general"],
+                "model_path": str(PROJECT_ROOT / "local_models" / "sovits-final" / "final_primary" / "G_2400_infer.pth"),
+                "config_path": str(PROJECT_ROOT / "local_models" / "sovits-final" / "final_primary" / "config.json"),
+                "speaker": "lain",
+                "device": "cuda",
+                "is_configured": True,
+                "is_demo_quality": True,
+                "smoke_test_passed": True,
+                "is_technical_validation_only": False,
+                "source_repo": "SuCicada/Lain-so-vits-svc-4.1",
+                "source_url": "https://huggingface.co/SuCicada/Lain-so-vits-svc-4.1",
+                "license": "gpl",
+                "install_report_path": str(PROJECT_ROOT / "local_models" / "sovits-final" / "final_primary" / "install_report.json"),
+                "notes": "默认演示模型，保持为当前主链路。",
+            },
             {
                 "preset_id": "tech_villager",
                 "display_name": "技术验收模型：Minecraft Villager",
                 "description": "仅用于验证真实 So-VITS-SVC CUDA 推理链路。",
+                "style_tags": ["technical", "validation", "fallback"],
                 "model_path": str(PROJECT_ROOT / "local_models" / "sovits-test" / "minecraft_villager" / "G_4000.pth"),
                 "config_path": str(PROJECT_ROOT / "local_models" / "sovits-test" / "minecraft_villager" / "config.json"),
                 "speaker": "villager",
                 "device": "cuda",
+                "is_configured": True,
                 "is_demo_quality": False,
+                "smoke_test_passed": False,
                 "is_technical_validation_only": True,
+                "source_url": "https://huggingface.co/Sucial/so-vits-svc4.1-Minecraft_villager",
+                "install_report_path": str(PROJECT_ROOT / "local_models" / "sovits-test" / "minecraft_villager" / "install_report.json"),
+                "notes": "仅技术验收 fallback，不作为默认演示模型。",
             }
         ],
     }
