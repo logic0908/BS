@@ -8,6 +8,8 @@
 - `SOVITS_MOCK=true` 仍保留，用于测试与流程验证。
 - 默认运行必须使用当前后端所在的 conda/base python。
 - `SOVITS_PYTHON` 只作为显式覆盖项，留空时使用当前 `sys.executable`。
+- 当前默认任务模式建议配合 `Celery + Redis` 使用；仅在测试或兼容场景下使用 `SVC_USE_CELERY=false`。
+- 默认演示模型仍为 `final_primary / lain`；`final_male_youth / Nova_Adult` 与 `final_male_powerful / AY` 已成为通过本地真实 smoke test 的专用男声 preset。
 
 ## 1. 建议先备份 base 环境
 
@@ -43,6 +45,9 @@ SOVITS_TRANSPOSE=0
 SOVITS_TIMEOUT_SECONDS=300
 SOVITS_PYTHON=
 SOVITS_VENDOR_PATH=
+REDIS_URL=redis://localhost:6379/0
+CELERY_TASK_ALWAYS_EAGER=false
+SVC_USE_CELERY=true
 ```
 
 字段说明：
@@ -56,6 +61,9 @@ SOVITS_VENDOR_PATH=
 - `SOVITS_TIMEOUT_SECONDS`: 单次推理超时时间，单位秒。
 - `SOVITS_PYTHON`: 留空时使用当前 conda/base python；仅在你明确要覆盖解释器时填写。
 - `SOVITS_VENDOR_PATH`: 默认留空；只有你显式设置时才允许额外注入 vendor 路径。
+- `REDIS_URL`: Celery broker/result backend 地址。
+- `CELERY_TASK_ALWAYS_EAGER`: 调试/测试时可改为 `true`。
+- `SVC_USE_CELERY`: `true` 时 `POST /api/v1/convert` 只创建任务并交给 Celery worker；`false` 时保留本地兼容模式。
 
 ## 4. So-VITS 依赖修复建议
 
@@ -251,6 +259,68 @@ python scripts/check_sovits_env.py --input /abs/path/to/input.wav --output /tmp/
 - `runtime/debug/check_sovits_env/sovits_command.txt`
 
 说明：
+
+### `final_male_youth / Nova_Adult` 专用男声 preset smoke test 记录
+
+当前本地已验证通过的一组少年感男声 smoke test 证据如下：
+
+- `preset_id=final_male_youth`
+- `display_name=少年感男声目标模型`
+- `model_path=/home/featurize/work/BS/local_models/sovits-final/final_male_youth/G_10000.pth`
+- `config_path=/home/featurize/work/BS/local_models/sovits-final/final_male_youth/config.json`
+- `speaker=Nova_Adult`
+- `speech_encoder=vec768l12`
+- `source_repo=Kuugo/Nova-Adult_So-Vits-SVC`
+- `license=license_unknown`
+- `task_id=smoke-final_male_youth-1778076531`
+- `selected_output=/home/featurize/work/BS/so-vits-svc/results/smoke-final_male_youth-1778076531.wav_0key_Nova_Adult_sovits_pm.flac`
+- `output_path=/tmp/final_male_youth_smoke_test.wav`
+- `duration_seconds=12.007`
+- `output_size=1059094`
+- `return_code=0`
+- `command_return_code=0`
+- `called_inference_main=true`
+- `command_matches_preset=true`
+- `speaker_matches_preset=true`
+- `soundfile_readable=true`
+- `success=true`
+
+由于 `license=license_unknown`，该 preset 仅作为内部复核/本地毕业设计技术演示候选，保持 `is_demo_quality=false`。
+
+### `final_male_powerful / AY` 专用男声 preset smoke test 记录
+
+当前本地已验证通过的一组专用男声 smoke test 证据如下：
+
+- `preset_id=final_male_powerful`
+- `display_name=力量感男声目标模型`
+- `model_path=/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/G_15000.pth`
+- `config_path=/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/config.json`
+- `speaker=AY`
+- `speech_encoder=vec256l9`
+- `source_repo=andreyaniv/andre-yaniv-so-vits-svc`
+- `license=license_unknown`
+- `task_id=smoke-final_male_powerful-1777912011`
+- `selected_output=/home/featurize/work/BS/so-vits-svc/results/smoke-final_male_powerful-1777912011.wav_0key_AY_sovits_pm.flac`
+- `output_path=/tmp/final_male_powerful_smoke_test.wav`
+- `duration_seconds=12.007`
+- `output_size=1059094`
+- `return_code=0`
+- `command_return_code=0`
+- `called_inference_main=true`
+- `command_matches_preset=true`
+- `speaker_matches_preset=true`
+- `soundfile_readable=true`
+- `success=true`
+
+### `vec256l9` 配置补丁说明
+
+`final_male_powerful` 的关键修复不是更换推理代码，而是补齐模型配置中的 `speech_encoder`：
+
+- 原始 `config.json` 中 `model.speech_encoder` 缺失或为空，默认会走 768 维 ContentVec 路线。
+- 该 checkpoint 实际期望的是 256 通道 SSL 输入，因此会与默认 768 维特征产生 shape mismatch。
+- 当前本地已在 `config.json` 中补充 `model.speech_encoder=vec256l9`，使 `ssl_dim=256` 与 checkpoint 输入对齐。
+
+这条修复说明了：`final_male_powerful` 的 smoke test 通过证明“模型配置与推理链路已经对齐”，但不等于“主观效果已经完成最终验收”。
 
 - 当前 `stderr` 中的主要 warning 属于 `torchaudio` deprecation / maintenance phase 提示，不影响这次真实 So-VITS-SVC CUDA 推理成功。
 

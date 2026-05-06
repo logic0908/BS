@@ -34,19 +34,19 @@
         "youth",
         "bright"
       ],
-      "model_path": "",
-      "config_path": "",
-      "speaker": "",
+      "model_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_youth/G_10000.pth",
+      "config_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_youth/config.json",
+      "speaker": "Nova_Adult",
       "device": "cuda",
-      "is_configured": false,
+      "is_configured": true,
       "is_demo_quality": false,
-      "smoke_test_passed": false,
+      "smoke_test_passed": true,
       "is_technical_validation_only": false,
       "source_repo": "Kuugo/Nova-Adult_So-Vits-SVC",
       "source_url": "https://huggingface.co/Kuugo/Nova-Adult_So-Vits-SVC",
       "license": "license_unknown",
-      "install_report_path": "",
-      "notes": "候选为 fictional UTAU-style character voice；当前环境下载与 smoke test 尚未完成，本轮保持未配置。"
+      "install_report_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_youth/install_report.json",
+      "notes": "v1.2 internal review candidate; local real smoke test passed with speaker=Nova_Adult, but license_unknown so this remains internal review only and is_demo_quality=false."
     },
     {
       "preset_id": "final_male_powerful",

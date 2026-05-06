@@ -10,13 +10,33 @@
 
 当前系统已经实现真实 So-VITS-SVC CUDA 推理与 Redis/Celery 异步任务闭环。当前 TextStyleAdapter 将文本提示词语义映射为模型 preset 与转换参数；后续可扩展为 So-VITS-SVC 网络中间层 Bias/Scale 条件注入。当前系统不声称已完成端到端文本向量注入 So-VITS-SVC 网络内部。StyleSinger 高级模式是实验分支，不是默认内容保持型转换主链路。
 
-## 2. 当前状态：v1.1-real-multi-style-preset-integration + final_male_powerful smoke passed
+## 2. 当前状态：v1.2-real-multi-style-preset-review + final_male_youth smoke passed
 
 - 真实 So-VITS-SVC CUDA 推理已跑通。
 - 默认演示模型 preset 仍为 `final_primary / lain`，它是当前可用默认模型，不代表所有专用风格均已覆盖。
 - 默认演示模型文件为 `G_2400_infer.pth`。
 - 默认演示模型来源为 `SuCicada/Lain-so-vits-svc-4.1`。
 - `final_male_powerful / AY` 已成为一个通过本地真实 So-VITS-SVC smoke test 的专用男声 preset。
+- `final_male_youth / Nova_Adult` 已完成首个授权下载复核候选的本地真实 smoke test；由于 `license=license_unknown`，仅作为内部复核/本地毕业设计技术演示候选，不建议用于公开传播素材，也不标记为 demo quality。
+- `final_male_youth` 当前绑定：
+  - `model_path=/home/featurize/work/BS/local_models/sovits-final/final_male_youth/G_10000.pth`
+  - `config_path=/home/featurize/work/BS/local_models/sovits-final/final_male_youth/config.json`
+  - `speaker=Nova_Adult`
+  - `speech_encoder=vec768l12`
+  - `source_repo=Kuugo/Nova-Adult_So-Vits-SVC`
+- `final_male_youth` smoke test 证据摘要：
+  - `task_id=smoke-final_male_youth-1778076531`
+  - `selected_output=/home/featurize/work/BS/so-vits-svc/results/smoke-final_male_youth-1778076531.wav_0key_Nova_Adult_sovits_pm.flac`
+  - `output_path=/tmp/final_male_youth_smoke_test.wav`
+  - `duration_seconds=12.007`
+  - `output_size=1059094`
+  - `return_code=0`
+  - `command_return_code=0`
+  - `called_inference_main=true`
+  - `command_matches_preset=true`
+  - `speaker_matches_preset=true`
+  - `soundfile_readable=true`
+  - `success=true`
 - `final_male_powerful` 当前绑定：
   - `model_path=/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/G_15000.pth`
   - `config_path=/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/config.json`
@@ -49,11 +69,11 @@
 - 新增多模型 preset 占位：`final_male_youth`、`final_male_powerful`、`final_female_soft`、`final_female_clear`。
 - `allow_preset_fallback` 已完成，但仍保持默认关闭；只有显式开启时才允许回退到 `final_primary/lain`，且不能伪装成专用风格真实效果。
 - 前端 `model_preset_id` 区域现在会显示每个 preset 的 `configured / smoke_test_passed / source_repo / license`，未配置 preset 明确显示“未绑定模型”。
-- `final_male_youth` 当前仍为候选/待完全验证 preset，尚未进入已启用状态。
+- `final_male_youth` 已通过本地真实 smoke test 并进入已配置状态，但 `license=license_unknown`，只能用于内部复核/本地技术演示，不作为公开 demo quality 模型。
 - `final_male_powerful` 已通过本地真实 smoke test，但这只代表推理链路可运行，不代表主观效果已经足够优秀；后续仍需人工听评或 A/B 对比评价。
 - `final_female_soft`、`final_female_clear` 当前仍未绑定真实模型，主要原因是公开演示授权链路不够清晰，系统不会为了补齐 preset 数量强行接入来源可疑模型。
 - 若 prompt 命中未配置的专用 preset，系统会明确返回 `SVC_MODEL_PRESET_NOT_CONFIGURED`，不会伪装为“已完成该风格转换”。
-- `final_male_powerful` 当前 `license=license_unknown`。它可以用于本地毕业设计技术演示，但不应被表述成“授权边界已完全清晰的公开商用模型”。
+- `final_male_youth` 与 `final_male_powerful` 当前均为 `license=license_unknown`。它们可以用于本地毕业设计技术演示/内部复核，但不应被表述成“授权边界已完全清晰的公开商用模型”。
 - 当前 `TextStyleAdapter` 仍是参数级/旁路控制，不应表述成已经完成 So-VITS-SVC 网络内部 Bias/Scale 条件注入。
 - 主观评价结果文档为 `docs/subjective_eval_results.md`，当前评分待人工填写。
 - 当前实验指标：
@@ -101,7 +121,7 @@
 
 ## 3.1 当前与 SVC 示例效果差距的主要来源
 
-- 当前 `final_primary / lain` 是可运行的默认演示模型，`final_male_powerful / AY` 是已通过本地真实 smoke test 的专用男声 preset；这并不等于系统已经完成多风格全覆盖。
+- 当前 `final_primary / lain` 是可运行的默认演示模型，`final_male_youth / Nova_Adult` 与 `final_male_powerful / AY` 是已通过本地真实 smoke test 的专用男声 preset；这并不等于系统已经完成多风格全覆盖。
 - `TextStyleAdapter` 目前仍是训练型参数级控制，不是 So-VITS-SVC 网络内部 Bias/Scale 注入。
 - 输入音频质量、F0 提取方式、人声分离质量和转调参数会显著影响结果。
 - 主观评价文档已经准备好，但人工评分仍待填写，因此当前效果归因证据还不完整。

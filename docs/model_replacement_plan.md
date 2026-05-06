@@ -7,7 +7,7 @@
 - `final_primary / lain`：当前可用默认模型，`is_configured=true`，`smoke_test_passed=true`，可用于默认演示；它不代表所有专用风格均已覆盖。
 - `tech_villager / villager`：仅技术验收 fallback，证明真实 So-VITS-SVC CUDA 推理链路可用，不作为默认演示模型。
 - `final_male_powerful / AY`：已绑定本地模型并通过真实 smoke test，`is_configured=true`，但 `license=license_unknown`，只能作为本地技术演示候选，不能标成授权边界清晰的 demo quality。
-- `final_male_youth`：候选为 `Kuugo/Nova-Adult_So-Vits-SVC`，当前仍未下载/未 smoke test，保持未配置。
+- `final_male_youth / Nova_Adult`：已下载并通过真实 smoke test，`is_configured=true`，但 `license=license_unknown`，只能作为内部复核/本地技术演示候选，不能标成授权边界清晰的 demo quality。
 - `final_female_soft`：待配置。已找到技术兼容候选，但授权/来源风险较高。
 - `final_female_clear`：待配置。已找到技术兼容候选，但授权/来源风险较高。
 - `allow_preset_fallback`：已完成，默认关闭；开启后也必须明确展示 requested/effective preset，不能把 fallback 说成专用风格真实效果。
@@ -32,7 +32,7 @@
 | `final_female_clear` | 备用/暂不推荐 | `Sucial/so-vits-svc4.1-sanwu` | 不建议 | 高，来源/肖像声音风险 | 技术兼容但不适合作为默认公开演示。 |
 | `final_female_clear` | 备用/暂不推荐 | `Shinku0721/Shinku_Yuuki_so-vits-svc_4.1_model` | 暂不建议 | 高，非商用 + SA，日语音色 | 只可在用户确认后下载并本地 smoke test。 |
 | `final_female_clear` | 当前默认基线 | `SuCicada/Lain-so-vits-svc-4.1` | 已存在 | 中，`gpl` | 继续作为 `final_primary`，不能冒充专用清亮女声。 |
-| `final_male_youth` | 推荐 | `Kuugo/Nova-Adult_So-Vits-SVC` | 需要用户授权下载 | 中，`license_unknown` | 结构匹配最好：`G_10000.pth`、`config.json`、`speaker=Nova_Adult`、`vec768l12`；下载前先确认 license。 |
+| `final_male_youth` | 已复核 | `Kuugo/Nova-Adult_So-Vits-SVC` | 已授权下载并本地 smoke test 通过 | 中，`license_unknown` | 结构匹配：`G_10000.pth`、`config.json`、`speaker=Nova_Adult`、`vec768l12`；可 `is_configured=true`，但保持 `is_demo_quality=false`。 |
 | `final_male_youth` | 备用 | `None1145/So-VITS-SVC-Lappland` | 暂不建议 | 高，角色音源和数据集版权风险 | 技术兼容但不贴“少年男声”，不建议主推。 |
 | `final_male_youth` | 排除 | 政治人物/真人 So-VITS-SVC 模型 | 不允许 | 高 | 不接入。 |
 | `final_male_powerful` | 当前保留 | `andreyaniv/andre-yaniv-so-vits-svc` | 已存在 | 中，`license_unknown` | 已 smoke test，可保留 configured；license 未清晰前不标 `is_demo_quality=true`。 |
@@ -51,7 +51,7 @@
 ## 4. 执行顺序
 
 1. 先处理 `final_female_soft` 或 `final_female_clear`：继续寻找 license 更清晰、非真人/非名人的女声模型；当前候选风险偏高，不建议马上下载。
-2. 再处理 `final_male_youth`：优先复核 `Kuugo/Nova-Adult_So-Vits-SVC` 的授权；用户授权后下载并 smoke test。
+2. 继续处理 `final_male_youth`：当前已 smoke test 通过，下一步只做 license 说明和主观听评，不再把它当作未下载候选。
 3. 再复核 `final_male_powerful`：已可运行，但需要 license 说明和主观听评。
 4. 每接入一个模型就运行 smoke test。
 5. 每接入一个模型就更新 `docs/effect_ablation_report.md` 和 `docs/subjective_eval_results.md`。
@@ -70,25 +70,14 @@
 - 未配置 preset 不误用 `final_primary`
 - `allow_preset_fallback=false` 时，未配置 preset 返回 `SVC_MODEL_PRESET_NOT_CONFIGURED`
 
-## 6. 需要用户授权的下载
+## 6. v1.2 已完成的授权下载复核
 
-当前建议先不下载女声高风险候选。若用户希望继续推进，建议先授权下载：
+本轮已按用户授权复核 `Kuugo/Nova-Adult_So-Vits-SVC`，并落盘到 `local_models/sovits-final/final_male_youth/`：
 
 ```bash
-python scripts/install_svc_model_preset.py \
-  --preset-id final_male_youth \
-  --repo-id Kuugo/Nova-Adult_So-Vits-SVC \
-  --model-file G_10000.pth \
-  --config-file config.json \
-  --speaker Nova_Adult \
-  --source-repo Kuugo/Nova-Adult_So-Vits-SVC \
-  --source-url https://huggingface.co/Kuugo/Nova-Adult_So-Vits-SVC \
-  --license license_unknown \
-  --style-tag male \
-  --style-tag youth \
-  --style-tag bright \
-  --apply \
-  --confirm-download
+bash scripts/smoke_test_final_svc_model.sh --preset-id final_male_youth
 ```
 
-下载后仍不能直接 `is_configured=true`；必须先运行真实 smoke test。
+smoke test 结果：`return_code=0`，`speaker=Nova_Adult`，`soundfile_readable=true`，`command_matches_preset=true`。由于 license 仍为 `license_unknown`，该 preset 只允许 `is_configured=true / smoke_test_passed=true / is_demo_quality=false`。
+
+当前建议仍先不下载女声高风险候选。若继续推进女声 preset，需要先找到授权边界更清晰的候选，或由用户明确授权仅做内部复核。
