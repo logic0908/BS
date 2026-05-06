@@ -4,9 +4,13 @@
   "presets": [
     {
       "preset_id": "final_primary",
-      "display_name": "最终演示 So-VITS-SVC 模型",
-      "description": "用于毕业设计默认演示的目标歌声转换模型。",
-      "style_tags": ["baseline", "demo", "general"],
+      "display_name": "当前可用默认 So-VITS-SVC 模型",
+      "description": "用于毕业设计默认演示的基线歌声转换模型，不代表所有专用风格均已覆盖。",
+      "style_tags": [
+        "baseline",
+        "demo",
+        "general"
+      ],
       "model_path": "/home/featurize/work/BS/local_models/sovits-final/final_primary/G_2400_infer.pth",
       "config_path": "/home/featurize/work/BS/local_models/sovits-final/final_primary/config.json",
       "speaker": "lain",
@@ -25,7 +29,11 @@
       "preset_id": "final_male_youth",
       "display_name": "少年感男声目标模型",
       "description": "预留给更贴近少年感男声的目标模型。",
-      "style_tags": ["male", "youth", "bright"],
+      "style_tags": [
+        "male",
+        "youth",
+        "bright"
+      ],
       "model_path": "",
       "config_path": "",
       "speaker": "",
@@ -43,27 +51,35 @@
     {
       "preset_id": "final_male_powerful",
       "display_name": "力量感男声目标模型",
-      "description": "预留给更贴近厚重/力量感男声的目标模型。",
-      "style_tags": ["male", "powerful", "thick"],
-      "model_path": "",
-      "config_path": "",
-      "speaker": "",
+      "description": "绑定更贴近厚重、有力、成熟男声风格的真实 So-VITS-SVC 模型。",
+      "style_tags": [
+        "male",
+        "powerful",
+        "thick"
+      ],
+      "model_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/G_15000.pth",
+      "config_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/config.json",
+      "speaker": "AY",
       "device": "cuda",
-      "is_configured": false,
+      "is_configured": true,
       "is_demo_quality": false,
-      "smoke_test_passed": false,
+      "smoke_test_passed": true,
       "is_technical_validation_only": false,
       "source_repo": "andreyaniv/andre-yaniv-so-vits-svc",
       "source_url": "https://huggingface.co/andreyaniv/andre-yaniv-so-vits-svc",
       "license": "license_unknown",
       "install_report_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/install_report.json",
-      "notes": "README 含第一人称使用说明，但当前环境下载与 smoke test 尚未完成，本轮保持未配置。"
+      "notes": "Public Hugging Face model candidate; license metadata is unknown; enabled only after local smoke test passed with model=G_15000.pth, speaker=AY, speech_encoder=vec256l9."
     },
     {
       "preset_id": "final_female_soft",
       "display_name": "温柔女声目标模型",
       "description": "预留给更贴近温柔/气声/抒情女声的目标模型。",
-      "style_tags": ["female", "soft", "breathy"],
+      "style_tags": [
+        "female",
+        "soft",
+        "breathy"
+      ],
       "model_path": "",
       "config_path": "",
       "speaker": "",
@@ -82,7 +98,11 @@
       "preset_id": "final_female_clear",
       "display_name": "清亮女声目标模型",
       "description": "预留给更贴近清亮/通透女声的目标模型。",
-      "style_tags": ["female", "clear", "bright"],
+      "style_tags": [
+        "female",
+        "clear",
+        "bright"
+      ],
       "model_path": "",
       "config_path": "",
       "speaker": "",
@@ -101,7 +121,11 @@
       "preset_id": "tech_villager",
       "display_name": "技术验收模型：Minecraft Villager",
       "description": "仅用于验证真实 So-VITS-SVC CUDA 推理链路。",
-      "style_tags": ["technical", "validation", "fallback"],
+      "style_tags": [
+        "technical",
+        "validation",
+        "fallback"
+      ],
       "model_path": "/home/featurize/work/BS/local_models/sovits-test/minecraft_villager/G_4000.pth",
       "config_path": "/home/featurize/work/BS/local_models/sovits-test/minecraft_villager/config.json",
       "speaker": "villager",

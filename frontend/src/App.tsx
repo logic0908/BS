@@ -1119,7 +1119,7 @@ function pickPresets(collection: ModelPresetCollection | null): ModelPresetStatu
   return [
     {
       preset_id: 'final_primary',
-      display_name: '最终演示 So-VITS-SVC 模型',
+      display_name: '当前可用默认 So-VITS-SVC 模型',
       ready: true,
       speaker: 'lain',
       style_tags: ['baseline', 'demo'],

@@ -6,7 +6,17 @@ import axios from 'axios'
 
 import App from './App'
 
+const { createWaveSurferMock } = vi.hoisted(() => ({
+  createWaveSurferMock: vi.fn(),
+}))
+
 vi.mock('axios')
+
+vi.mock('wavesurfer.js', () => ({
+  default: {
+    create: createWaveSurferMock,
+  },
+}))
 
 vi.mock('./components/FileUpload', () => ({
   default: ({ onFileSelect, disabled }: { onFileSelect: (file: File) => void; disabled?: boolean }) => (
@@ -20,81 +30,101 @@ vi.mock('./components/FileUpload', () => ({
   ),
 }))
 
-vi.mock('./components/WaveformPlayer', () => ({
-  default: ({ audioUrl }: { audioUrl: string }) => <div>Waveform:{audioUrl}</div>,
-}))
-
-vi.mock('./components/StyleControls', () => ({
-  default: ({
-    prompt,
-    setPrompt,
-    onConvert,
-    disabled,
-    isLoading,
-    promptError,
-    actionLabel,
-  }: {
-    prompt: string
-    setPrompt: (value: string) => void
-    onConvert: () => void
-    disabled: boolean
-    isLoading: boolean
-    promptError?: string | null
-    actionLabel?: string
-  }) => (
-    <div>
-      <textarea
-        aria-label="style-prompt"
-        value={prompt}
-        onChange={(event) => setPrompt(event.target.value)}
-      />
-      {promptError ? <div>{promptError}</div> : null}
-      <button
-        type="button"
-        disabled={disabled || !prompt.trim() || isLoading}
-        onClick={onConvert}
-      >
-        {isLoading ? '转换中...' : actionLabel || '开始转换'}
-      </button>
-    </div>
-  ),
-}))
-
-const mockedAxios = axios as any
+const mockedAxios = axios as unknown as {
+  get: ReturnType<typeof vi.fn>
+  post: ReturnType<typeof vi.fn>
+}
 
 const defaultHealthResponse = {
   data: {
     ok: true,
     app_status: 'ok',
-    python_executable: '/usr/bin/python',
-    python_version: '3.11',
-    conda_env: 'base',
-    mock_mode: true,
-    frontend_build_info: null,
-    timestamp: '2026-04-27T00:00:00+00:00',
+    mock_mode: false,
+    task_backend_mode: 'celery',
+    svc_model_presets: {
+      active_preset_id: 'final_primary',
+      fallback_preset_id: 'tech_villager',
+      presets: [
+        {
+          preset_id: 'final_primary',
+          display_name: '当前可用默认 So-VITS-SVC 模型',
+          ready: true,
+          speaker: 'lain',
+          style_tags: ['baseline', 'demo'],
+          source_repo: 'SuCicada/Lain-so-vits-svc-4.1',
+          source_url: 'https://huggingface.co/SuCicada/Lain-so-vits-svc-4.1',
+          license: 'gpl',
+          is_configured: true,
+          is_demo_quality: true,
+          smoke_test_passed: true,
+          is_technical_validation_only: false,
+        },
+        {
+          preset_id: 'final_male_youth',
+          display_name: '少年感男声目标模型',
+          ready: false,
+          speaker: '',
+          style_tags: ['male', 'youth', 'bright'],
+          source_repo: 'Kuugo/Nova-Adult_So-Vits-SVC',
+          source_url: 'https://huggingface.co/Kuugo/Nova-Adult_So-Vits-SVC',
+          license: 'license_unknown',
+          is_configured: false,
+          is_demo_quality: false,
+          smoke_test_passed: false,
+          is_technical_validation_only: false,
+        },
+        {
+          preset_id: 'tech_villager',
+          display_name: '技术验收模型：Minecraft Villager',
+          ready: true,
+          speaker: 'villager',
+          style_tags: ['technical', 'validation'],
+          source_repo: 'Sucial/so-vits-svc4.1-Minecraft_villager',
+          source_url: 'https://huggingface.co/Sucial/so-vits-svc4.1-Minecraft_villager',
+          license: 'cc-by-nc-sa-4.0',
+          is_configured: true,
+          is_demo_quality: false,
+          smoke_test_passed: true,
+          is_technical_validation_only: true,
+        },
+      ],
+    },
+    timestamp: '2026-05-03T00:00:00+00:00',
   },
 }
 
 const defaultSovitsCheckResponse = {
   data: {
-    SOVITS_MOCK: true,
-    SOVITS_REPO_DIR_exists: true,
-    SOVITS_MODEL_PATH_exists: true,
-    SOVITS_CONFIG_PATH_exists: true,
-    SOVITS_SPEAKER: 'speaker_a',
+    SOVITS_MOCK: false,
     SOVITS_DEVICE: 'cuda',
-    SOVITS_PYTHON: '/usr/bin/python',
-    torch_version: '2.3.0',
-    torch_cuda_available: false,
-    torch_cuda_version: '12.1',
-    torch_device_count: 0,
-    dev_nvidia_devices: [],
-    nvidia_smi: { return_code: 1, stdout: '', stderr: 'not visible' },
-    import_status: {
-      numpy: { ok: true },
-      scipy: { ok: true },
-      librosa: { ok: true },
-      numba: { ok: true },
+    torch_cuda_available: true,
+    torch_device_count: 1,
+    f0_method: 'rmvpe',
+    auto_predict_f0: false,
+    slice_db: -40,
+    clip_seconds: 0,
+    pad_seconds: 0.5,
+    svc_model_presets: defaultHealthResponse.data.svc_model_presets,
+  },
+}
+
+const defaultUploadResponse = {
+  data: {
+    vocals_id: 'vocals-1',
+    is_vocal_only: false,
+    input_quality_summary: {
+      duration: 12.4,
+      sample_rate: 44100,
+      channels: 2,
+      rms: 0.0812,
+      peak: 0.6342,
+      low_energy_ratio: 0.18,
+      clipping_ratio: 0,
+      silence_ratio: 0.12,
+      is_too_short: false,
+      is_probably_silent: false,
+      quality_level: 'good',
+      warnings: [],
     },
   },
 }
@@ -104,7 +134,23 @@ const flush = async () => {
   await Promise.resolve()
 }
 
-describe('App demo UI', () => {
+function buildWaveSurferInstance() {
+  const handlers: Record<string, () => void> = {}
+  return {
+    on: vi.fn((event: string, callback: () => void) => {
+      handlers[event] = callback
+    }),
+    load: vi.fn(() => {
+      handlers.ready?.()
+    }),
+    play: vi.fn(async () => {}),
+    pause: vi.fn(() => {}),
+    stop: vi.fn(() => {}),
+    destroy: vi.fn(() => {}),
+  }
+}
+
+describe('App demo workspace', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -114,12 +160,16 @@ describe('App demo UI', () => {
     root = createRoot(container)
     mockedAxios.post.mockReset()
     mockedAxios.get.mockReset()
+    createWaveSurferMock.mockReset()
+    createWaveSurferMock.mockImplementation(() => buildWaveSurferInstance())
     vi.stubGlobal(
       'URL',
       Object.assign(globalThis.URL ?? {}, {
         createObjectURL: vi.fn(() => 'blob:mock-url'),
+        revokeObjectURL: vi.fn(),
       }),
     )
+
     mockedAxios.get.mockImplementation(async (url: string) => {
       if (url === '/api/v1/system/health') {
         return defaultHealthResponse
@@ -140,21 +190,36 @@ describe('App demo UI', () => {
     vi.unstubAllGlobals()
   })
 
-  it('默认页面显示 Hero 与 SVC 主链路徽章', async () => {
+  it('默认显示正式演示工作台与关键状态徽章', async () => {
     await act(async () => {
       root.render(<App />)
       await flush()
     })
 
     expect(screen.getByText('基于文本提示词控制的歌声风格转换系统')).toBeInTheDocument()
-    expect(screen.getByText('SVC 主链路')).toBeInTheDocument()
-    expect(screen.queryByText('毕业设计演示系统')).not.toBeInTheDocument()
+    expect(screen.getByText('v1.1 真实多风格 preset 接入工作台')).toBeInTheDocument()
+    expect(screen.getByText('真实 SVC')).toBeInTheDocument()
+    expect(screen.getAllByText('Celery / Redis').length).toBeGreaterThan(0)
+    expect(screen.getByText('GPU 可见')).toBeInTheDocument()
+    expect(screen.getByText('Adapter trained 已接入')).toBeInTheDocument()
+    expect(screen.getByText('查看技术详情')).toBeInTheDocument()
+    expect(screen.getByText('source_repo：SuCicada/Lain-so-vits-svc-4.1')).toBeInTheDocument()
+    expect(screen.getByText('license：gpl')).toBeInTheDocument()
   })
 
-  it('未输入 prompt 时开始转换按钮禁用', async () => {
+  it('上传后显示输入质量摘要与风险提示', async () => {
     mockedAxios.post.mockImplementation(async (url: string) => {
       if (url === '/api/v1/upload') {
-        return { data: { vocals_id: 'vocals-1' } }
+        return {
+          data: {
+            ...defaultUploadResponse.data,
+            input_quality_summary: {
+              ...defaultUploadResponse.data.input_quality_summary,
+              quality_level: 'warn',
+              warnings: ['音频较短，转换结果可能不够稳定。'],
+            },
+          },
+        }
       }
       throw new Error(`Unexpected POST ${String(url)}`)
     })
@@ -169,14 +234,84 @@ describe('App demo UI', () => {
       await flush()
     })
 
-    expect(screen.getByText('请先输入目标风格描述')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '开始转换' })).toBeDisabled()
+    expect(screen.getByText('输入质量')).toBeInTheDocument()
+    expect(screen.getAllByText('一般').length).toBeGreaterThan(0)
+    expect(screen.getByText('音频较短，转换结果可能不够稳定。')).toBeInTheDocument()
   })
 
-  it('输入 prompt 且上传成功后会调用 /api/v1/convert', async () => {
+  it('bad 质量只提示不阻止默认 SVC 转换', async () => {
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url === '/api/v1/upload') {
+        return {
+          data: {
+            ...defaultUploadResponse.data,
+            input_quality_summary: {
+              ...defaultUploadResponse.data.input_quality_summary,
+              quality_level: 'bad',
+              warnings: ['音频整体能量偏低或静音比例过高，可能导致转换失败或输出空洞。'],
+              is_probably_silent: true,
+            },
+          },
+        }
+      }
+      if (url === '/api/v1/convert') {
+        return { data: { task_id: 'task-bad' } }
+      }
+      throw new Error(`Unexpected POST ${String(url)}`)
+    })
+    mockedAxios.get.mockImplementation(async (url: string) => {
+      if (url === '/api/v1/system/health') {
+        return defaultHealthResponse
+      }
+      if (url === '/api/v1/system/sovits-check') {
+        return defaultSovitsCheckResponse
+      }
+      if (url === '/api/v1/tasks/task-bad') {
+        return {
+          data: {
+            status: 'succeeded',
+            stage: 'completed',
+            progress: 100,
+            message: '转换完成',
+            result_metadata: {
+              inference_mode: 'real',
+              model_preset_id: 'final_primary',
+              model_display_name: '当前可用默认 So-VITS-SVC 模型',
+              speaker: 'lain',
+              task_backend_mode: 'celery',
+            },
+          },
+        }
+      }
+      if (url === '/api/v1/tasks/task-bad/result') {
+        return { data: new Blob(['wav']) }
+      }
+      throw new Error(`Unexpected GET ${String(url)}`)
+    })
+
+    await act(async () => {
+      root.render(<App />)
+      await flush()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Mock Upload'))
+      await flush()
+    })
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('style-prompt'), { target: { value: '清亮、少年感' } })
+      await flush()
+    })
+
+    expect(screen.getByText('输入质量较差，但不会阻止转换；建议在答辩演示前优先换用更干净的人声片段。')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '开始转换' })).toBeEnabled()
+  })
+
+  it('默认 SVC 转换会携带高级参数并继续使用 /api/v1/convert', async () => {
     mockedAxios.post.mockImplementation(async (url: string, payload?: Record<string, unknown>) => {
       if (url === '/api/v1/upload') {
-        return { data: { vocals_id: 'vocals-1' } }
+        return defaultUploadResponse
       }
       if (url === '/api/v1/convert') {
         return { data: { task_id: 'task-1', engine: 'sovits' } }
@@ -197,27 +332,32 @@ describe('App demo UI', () => {
             stage: 'completed',
             progress: 100,
             message: '转换完成',
-            inference_mode: 'mock',
             result_metadata: {
-              inference_mode: 'mock',
-              mock_enabled: true,
-              speaker: 'speaker_a',
-              model_path: '/models/mock-model.pth',
-              called_inference_main: false,
-              final_output_path: '/tmp/converted.wav',
+              inference_mode: 'real',
+              model_preset_id: 'final_primary',
+              model_display_name: '当前可用默认 So-VITS-SVC 模型',
+              speaker: 'lain',
+              task_backend_mode: 'celery',
+              adapter_mode: 'trained',
+              f0_method: 'rmvpe',
+              auto_predict_f0: false,
+              model_preset_ready: true,
             },
             selected_style: {
-              style_id: 'pop_bright',
-              description: '流行、明亮、清澈、少年感',
-              match_score: 88,
-              matched_keywords: ['流行', '明亮'],
-              reason: '命中关键词：流行、明亮；选择 pop_bright',
+              style_id: 'male_youth',
+              style_label: '少年感男声',
+              model_preset_id: 'final_male_youth',
+              model_preset_ready: false,
+              model_preset_configured: false,
+              current_style_has_dedicated_model: true,
+              model_preset_notice: '该风格尚未绑定目标模型',
+              reason: '命中关键词：清亮；选择 male_youth',
             },
           },
         }
       }
       if (url === '/api/v1/tasks/task-1/result') {
-        return { data: new Blob(['wav']), headers: { 'x-svc-inference-mode': 'mock' } }
+        return { data: new Blob(['wav']) }
       }
       throw new Error(`Unexpected GET ${String(url)}`)
     })
@@ -238,6 +378,16 @@ describe('App demo UI', () => {
     })
 
     await act(async () => {
+      fireEvent.click(screen.getByText('高级转换参数'))
+      await flush()
+    })
+
+    await act(async () => {
+      fireEvent.change(screen.getAllByRole('spinbutton')[0], { target: { value: '-2' } })
+      await flush()
+    })
+
+    await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '开始转换' }))
       await flush()
     })
@@ -248,156 +398,79 @@ describe('App demo UI', () => {
         vocals_id: 'vocals-1',
         prompt_text: '流行、清亮、少年感',
         style_strength: 0.65,
+        model_preset_id: 'final_primary',
+        transpose: -2,
+        f0_method: 'rmvpe',
+        auto_predict_f0: false,
+        slice_db: -40,
+        clip_seconds: 0,
+        pad_seconds: 0.5,
+        allow_preset_fallback: false,
         engine: 'sovits',
       }),
     )
     expect(mockedAxios.post).not.toHaveBeenCalledWith('/api/v1/tasks', expect.anything())
+    await waitFor(() => {
+      expect(screen.getByText('A/B 波形对比')).toBeInTheDocument()
+    })
+    expect(screen.getAllByText('rmvpe').length).toBeGreaterThan(0)
+    expect(
+      screen.getByText('当前提示词匹配“少年感男声”风格，但该风格尚未绑定可用 SVC 目标模型；当前不会伪装为该风格转换。'),
+    ).toBeInTheDocument()
   })
 
-  it('上传后干声 checkbox 仍可交互并提示重新上传后生效', async () => {
+  it('开启 allow_preset_fallback 时显示请求 preset 与实际使用 preset', async () => {
     mockedAxios.post.mockImplementation(async (url: string) => {
       if (url === '/api/v1/upload') {
-        return { data: { vocals_id: 'vocals-1', is_vocal_only: false } }
-      }
-      throw new Error(`Unexpected POST ${String(url)}`)
-    })
-
-    await act(async () => {
-      root.render(<App />)
-      await flush()
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByText('Mock Upload'))
-      await flush()
-    })
-
-    const checkbox = screen.getByLabelText('输入已是纯人声/干声，跳过人声分离') as HTMLInputElement
-    expect(checkbox).not.toBeDisabled()
-    expect(checkbox.checked).toBe(false)
-
-    await act(async () => {
-      fireEvent.click(checkbox)
-      await flush()
-    })
-
-    expect(checkbox.checked).toBe(true)
-    expect(screen.getByText('更改该选项将在重新上传或重新预处理后生效。')).toBeInTheDocument()
-  })
-
-  it('mock 模式显示 Mock SVC 提示', async () => {
-    await act(async () => {
-      root.render(<App />)
-      await flush()
-    })
-
-    expect(screen.getAllByText(/当前为 Mock SVC，仅验证流程/).length).toBeGreaterThan(0)
-  })
-
-  it('real 模式显示 Real So-VITS-SVC 提示', async () => {
-    mockedAxios.get.mockImplementation(async (url: string) => {
-      if (url === '/api/v1/system/health') {
-        return {
-          data: {
-            ...defaultHealthResponse.data,
-            mock_mode: false,
-          },
-        }
-      }
-      if (url === '/api/v1/system/sovits-check') {
-        return {
-          data: {
-            ...defaultSovitsCheckResponse.data,
-            SOVITS_MOCK: false,
-            torch_cuda_available: true,
-            dev_nvidia_devices: ['/dev/nvidia0'],
-            nvidia_smi: { return_code: 0, stdout: 'ok', stderr: '' },
-          },
-        }
-      }
-      throw new Error(`Unexpected GET ${String(url)}`)
-    })
-
-    await act(async () => {
-      root.render(<App />)
-      await flush()
-    })
-
-    expect(screen.getByText('真实 SVC')).toBeInTheDocument()
-  })
-
-  it('real 推理完成后显示真实 So-VITS-SVC 元信息', async () => {
-    mockedAxios.post.mockImplementation(async (url: string) => {
-      if (url === '/api/v1/upload') {
-        return { data: { vocals_id: 'vocals-1' } }
+        return defaultUploadResponse
       }
       if (url === '/api/v1/convert') {
-        return { data: { task_id: 'task-real', engine: 'sovits' } }
+        return { data: { task_id: 'task-fallback', engine: 'sovits' } }
       }
       throw new Error(`Unexpected POST ${String(url)}`)
     })
     mockedAxios.get.mockImplementation(async (url: string) => {
       if (url === '/api/v1/system/health') {
-        return {
-          data: {
-            ...defaultHealthResponse.data,
-            mock_mode: false,
-          },
-        }
+        return defaultHealthResponse
       }
       if (url === '/api/v1/system/sovits-check') {
-        return {
-          data: {
-            ...defaultSovitsCheckResponse.data,
-            SOVITS_MOCK: false,
-            torch_cuda_available: true,
-            dev_nvidia_devices: ['/dev/nvidia0'],
-            nvidia_smi: { return_code: 0, stdout: 'ok', stderr: '' },
-          },
-        }
+        return defaultSovitsCheckResponse
       }
-      if (url === '/api/v1/tasks/task-real') {
+      if (url === '/api/v1/tasks/task-fallback') {
         return {
           data: {
             status: 'succeeded',
             stage: 'completed',
             progress: 100,
             message: '转换完成',
-            inference_mode: 'real',
             result_metadata: {
               inference_mode: 'real',
-              mock_enabled: false,
-              speaker: 'villager',
               model_preset_id: 'final_primary',
-              model_display_name: '最终演示 So-VITS-SVC 模型',
-              source_repo: 'SuCicada/Lain-so-vits-svc-4.1',
-              license: 'gpl',
-              model_path: '/models/final_primary/G_2400_infer.pth',
-              config_path: '/models/final_primary/config.json',
-              model_path_basename: 'G_2400_infer.pth',
-              config_path_basename: 'config.json',
-              is_demo_quality: true,
-              is_technical_validation_only: false,
-              selected_output: '/repo/results/test.wav_0key_villager_sovits_pm.flac',
-              final_output_path: '/tmp/converted.wav',
-              return_code: 0,
-              elapsed_seconds: 34.297,
-              called_inference_main: true,
+              requested_model_preset_id: 'final_male_youth',
+              effective_model_preset_id: 'final_primary',
+              preset_fallback_used: true,
+              preset_fallback_reason:
+                '当前提示词匹配专用风格 preset，但该 preset 尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。',
+              model_display_name: '当前可用默认 So-VITS-SVC 模型',
+              speaker: 'lain',
+              task_backend_mode: 'celery',
+              adapter_mode: 'trained',
+              f0_method: 'rmvpe',
+              auto_predict_f0: false,
+              model_preset_ready: true,
             },
             selected_style: {
-              style_id: 'pop_bright',
-              description: '流行、明亮、清澈、少年感',
-              match_score: 88,
-              matched_keywords: ['流行', '明亮'],
-              reason: '命中关键词：流行、明亮；选择 pop_bright',
+              style_id: 'male_youth',
+              style_label: '少年感男声',
+              model_preset_id: 'final_male_youth',
+              model_preset_ready: false,
+              current_style_has_dedicated_model: true,
             },
           },
         }
       }
-      if (url === '/api/v1/tasks/task-real/result') {
-        return {
-          data: new Blob(['wav']),
-          headers: {},
-        }
+      if (url === '/api/v1/tasks/task-fallback/result') {
+        return { data: new Blob(['wav']) }
       }
       throw new Error(`Unexpected GET ${String(url)}`)
     })
@@ -411,7 +484,16 @@ describe('App demo UI', () => {
       await flush()
     })
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('style-prompt'), { target: { value: '流行、清亮' } })
+      fireEvent.change(screen.getByLabelText('style-prompt'), { target: { value: '少年感、男声、清亮' } })
+      await flush()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByText('高级转换参数'))
+      await flush()
+    })
+    await act(async () => {
+      const checkboxes = screen.getAllByRole('checkbox')
+      fireEvent.click(checkboxes[checkboxes.length - 1])
       await flush()
     })
     await act(async () => {
@@ -419,69 +501,29 @@ describe('App demo UI', () => {
       await flush()
     })
 
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      '/api/v1/convert',
+      expect.objectContaining({
+        allow_preset_fallback: true,
+      }),
+    )
     await waitFor(() => {
-      expect(screen.getAllByText('真实 So-VITS-SVC').length).toBeGreaterThan(0)
+      expect(screen.getByText('当前提示词匹配专用风格 preset，但该 preset 尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。')).toBeInTheDocument()
     })
-    expect(mockedAxios.get).toHaveBeenCalledWith('/api/v1/tasks/task-real/result', { responseType: 'blob' })
-    expect(screen.getByText('villager')).toBeInTheDocument()
-    expect(screen.getByText('final_primary')).toBeInTheDocument()
-    expect(screen.getByText('G_2400_infer.pth')).toBeInTheDocument()
-    expect(screen.getByText('SuCicada/Lain-so-vits-svc-4.1')).toBeInTheDocument()
-    expect(screen.getByText('gpl')).toBeInTheDocument()
-    expect(screen.getByText('当前使用最终演示 SVC 模型。')).toBeInTheDocument()
-    expect(screen.getByText('是')).toBeInTheDocument()
+    expect(screen.getAllByText('final_male_youth').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('final_primary').length).toBeGreaterThan(0)
   })
 
-  it('selected_style 存在时显示 style_id description reason', async () => {
+  it('WaveSurfer 初始化失败时会回退到原生播放器', async () => {
+    createWaveSurferMock.mockImplementationOnce(() => {
+      throw new Error('boom')
+    })
     mockedAxios.post.mockImplementation(async (url: string) => {
       if (url === '/api/v1/upload') {
-        return { data: { vocals_id: 'vocals-1' } }
-      }
-      if (url === '/api/v1/convert') {
-        return { data: { task_id: 'task-1', engine: 'sovits' } }
+        return defaultUploadResponse
       }
       throw new Error(`Unexpected POST ${String(url)}`)
     })
-    mockedAxios.get.mockImplementation(async (url: string) => {
-      if (url === '/api/v1/system/health') {
-        return defaultHealthResponse
-      }
-      if (url === '/api/v1/system/sovits-check') {
-        return defaultSovitsCheckResponse
-      }
-      if (url === '/api/v1/tasks/task-1') {
-        return {
-          data: {
-            status: 'succeeded',
-            stage: 'completed',
-            progress: 100,
-            message: '转换完成',
-            inference_mode: 'mock',
-            result_metadata: {
-              inference_mode: 'mock',
-              mock_enabled: true,
-              speaker: 'speaker_a',
-              model_path: '/models/mock-model.pth',
-              called_inference_main: false,
-              final_output_path: '/tmp/converted.wav',
-            },
-            selected_style: {
-              style_id: 'lyrical_soft',
-              model_preset_id: 'final_primary',
-              model_display_name: '最终演示 So-VITS-SVC 模型',
-              description: '抒情、温柔、细腻、治愈',
-              match_score: 77,
-              matched_keywords: ['温柔', '抒情'],
-              reason: '命中关键词：温柔、抒情；选择 lyrical_soft',
-            },
-          },
-        }
-      }
-      if (url === '/api/v1/tasks/task-1/result') {
-        return { data: new Blob(['wav']), headers: { 'x-svc-inference-mode': 'mock' } }
-      }
-      throw new Error(`Unexpected GET ${String(url)}`)
-    })
 
     await act(async () => {
       root.render(<App />)
@@ -492,147 +534,7 @@ describe('App demo UI', () => {
       fireEvent.click(screen.getByText('Mock Upload'))
       await flush()
     })
-    await act(async () => {
-      fireEvent.change(screen.getByLabelText('style-prompt'), { target: { value: '温柔抒情' } })
-      await flush()
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '开始转换' }))
-      await flush()
-    })
 
-    await waitFor(() => {
-      expect(screen.getByText('风格匹配信息')).toBeInTheDocument()
-    })
-    expect(screen.getAllByText(/lyrical_soft/).length).toBeGreaterThan(0)
-    expect(screen.getByText('final_primary')).toBeInTheDocument()
-    expect(screen.getByText('最终演示 So-VITS-SVC 模型')).toBeInTheDocument()
-    expect(screen.getByText(/抒情、温柔、细腻、治愈/)).toBeInTheDocument()
-    expect(screen.getByText(/命中关键词：温柔、抒情；选择 lyrical_soft/)).toBeInTheDocument()
-  })
-
-  it('match_score=0 时显示 fallback warning', async () => {
-    mockedAxios.post.mockImplementation(async (url: string) => {
-      if (url === '/api/v1/upload') {
-        return { data: { vocals_id: 'vocals-1' } }
-      }
-      if (url === '/api/v1/convert') {
-        return { data: { task_id: 'task-1', engine: 'sovits' } }
-      }
-      throw new Error(`Unexpected POST ${String(url)}`)
-    })
-    mockedAxios.get.mockImplementation(async (url: string) => {
-      if (url === '/api/v1/system/health') {
-        return defaultHealthResponse
-      }
-      if (url === '/api/v1/system/sovits-check') {
-        return defaultSovitsCheckResponse
-      }
-      if (url === '/api/v1/tasks/task-1') {
-        return {
-          data: {
-            status: 'succeeded',
-            stage: 'completed',
-            progress: 100,
-            message: '转换完成',
-            inference_mode: 'mock',
-            result_metadata: {
-              inference_mode: 'mock',
-              mock_enabled: true,
-              speaker: 'speaker_a',
-              model_path: '/models/mock-model.pth',
-              called_inference_main: false,
-              final_output_path: '/tmp/converted.wav',
-            },
-            selected_style: {
-              style_id: 'pop_bright',
-              description: '流行、明亮、清澈、少年感',
-              match_score: 0,
-              matched_keywords: [],
-              reason: '未命中明显关键词；使用默认候选 pop_bright',
-            },
-          },
-        }
-      }
-      if (url === '/api/v1/tasks/task-1/result') {
-        return { data: new Blob(['wav']), headers: { 'x-svc-inference-mode': 'mock' } }
-      }
-      throw new Error(`Unexpected GET ${String(url)}`)
-    })
-
-    await act(async () => {
-      root.render(<App />)
-      await flush()
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByText('Mock Upload'))
-      await flush()
-    })
-    await act(async () => {
-      fireEvent.change(screen.getByLabelText('style-prompt'), { target: { value: '未知风格' } })
-      await flush()
-    })
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '开始转换' }))
-      await flush()
-    })
-
-    expect(screen.getByText(/提示词未命中风格库，当前使用默认 preset/)).toBeInTheDocument()
-  })
-
-  it('StyleSinger 高级模式默认折叠，但可以展开', async () => {
-    await act(async () => {
-      root.render(<App />)
-      await flush()
-    })
-
-    const summary = screen.getByText('高级模式：StyleSinger 乐谱/metadata 分支')
-    const details = summary.closest('details')
-    expect(details).not.toHaveAttribute('open')
-
-    await act(async () => {
-      fireEvent.click(summary)
-      await flush()
-    })
-
-    expect(details).toHaveAttribute('open')
-    expect(screen.getByText('extract_features')).toBeInTheDocument()
-  })
-
-  it('health panel 能显示 GPU 不可见提示', async () => {
-    mockedAxios.get.mockImplementation(async (url: string) => {
-      if (url === '/api/v1/system/health') {
-        return {
-          data: {
-            ...defaultHealthResponse.data,
-            mock_mode: false,
-          },
-        }
-      }
-      if (url === '/api/v1/system/sovits-check') {
-        return {
-          data: {
-            ...defaultSovitsCheckResponse.data,
-            SOVITS_MOCK: false,
-            torch_cuda_available: false,
-            dev_nvidia_devices: [],
-            nvidia_smi: { return_code: 1, stdout: '', stderr: 'not visible' },
-          },
-        }
-      }
-      throw new Error(`Unexpected GET ${String(url)}`)
-    })
-
-    await act(async () => {
-      root.render(<App />)
-      await flush()
-    })
-
-    await act(async () => {
-      fireEvent.click(screen.getByText('系统状态与环境诊断'))
-      await flush()
-    })
-
-    expect(screen.getAllByText(/当前 GPU 对容器不可见，真实推理可能失败/).length).toBeGreaterThan(0)
+    expect(screen.getByText('WaveSurfer 初始化失败，已回退到原生播放器。')).toBeInTheDocument()
   })
 })

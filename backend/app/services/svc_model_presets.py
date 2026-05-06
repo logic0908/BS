@@ -195,8 +195,8 @@ def _default_payload() -> dict[str, Any]:
         "presets": [
             {
                 "preset_id": "final_primary",
-                "display_name": "最终演示 So-VITS-SVC 模型",
-                "description": "用于毕业设计默认演示的目标歌声转换模型。",
+                "display_name": "当前可用默认 So-VITS-SVC 模型",
+                "description": "用于毕业设计默认演示的基线歌声转换模型，不代表所有专用风格均已覆盖。",
                 "style_tags": ["baseline", "demo", "general"],
                 "model_path": str(PROJECT_ROOT / "local_models" / "sovits-final" / "final_primary" / "G_2400_infer.pth"),
                 "config_path": str(PROJECT_ROOT / "local_models" / "sovits-final" / "final_primary" / "config.json"),

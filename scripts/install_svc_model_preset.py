@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
@@ -51,6 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mark-configured", action="store_true")
     parser.add_argument("--smoke-test-passed", action="store_true")
     parser.add_argument("--demo-quality", action="store_true")
+    parser.add_argument("--apply", action="store_true", help="Actually copy/download assets and update svc_model_presets.json. Default is dry-run.")
+    parser.add_argument("--confirm-download", action="store_true", help="Required before downloading model assets from Hugging Face.")
     return parser
 
 
@@ -62,6 +65,14 @@ def main() -> int:
     source_repo = args.source_repo.strip() or args.repo_id.strip()
     source_url = args.source_url.strip() or _default_source_url(args.repo_id.strip())
     license_name = (args.license or "").strip() or "license_unknown"
+
+    if args.apply and args.repo_id and not (args.confirm_download or _env_confirm_download()):
+        raise SystemExit("Refusing to download without --confirm-download or CONFIRM_DOWNLOAD=1.")
+
+    if not args.apply:
+        report = _dry_run_report(args, target_dir, source_repo, source_url, license_name)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0
 
     model_target, config_target, install_mode = _materialize_assets(args, target_dir)
     config_payload = json.loads(config_target.read_text(encoding="utf-8"))
@@ -143,6 +154,35 @@ def _materialize_assets(args: argparse.Namespace, target_dir: Path) -> tuple[Pat
         mapped_name = "model_card.md" if optional_name.lower() == "readme.md" else optional_name
         shutil.copy2(optional_cache, target_dir / mapped_name)
     return model_target, config_target, "huggingface_download"
+
+
+def _env_confirm_download() -> bool:
+    return str(os.environ.get("CONFIRM_DOWNLOAD", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dry_run_report(
+    args: argparse.Namespace,
+    target_dir: Path,
+    source_repo: str,
+    source_url: str,
+    license_name: str,
+) -> dict[str, Any]:
+    planned_mode = "local_bind" if args.model_path and args.config_path else "huggingface_download"
+    return {
+        "dry_run": True,
+        "preset_id": args.preset_id,
+        "planned_mode": planned_mode,
+        "target_dir": str(target_dir),
+        "source_repo": source_repo,
+        "source_url": source_url,
+        "license": license_name,
+        "model_file": args.model_file or Path(args.model_path).name,
+        "config_file": args.config_file or Path(args.config_path).name,
+        "speaker": args.speaker,
+        "would_update_config": bool(args.apply),
+        "download_requires_confirm": bool(args.repo_id),
+        "next_step": "Re-run with --apply and, for Hugging Face downloads, --confirm-download after license review.",
+    }
 
 
 def _update_preset_config(
