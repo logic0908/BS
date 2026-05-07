@@ -26,12 +26,27 @@ redis-server --daemonize yes
 celery -A backend.app.core.celery_app.celery_app worker --loglevel=info -Q svc
 ```
 
+如果要做真实 GPU 推理演示或 v1.3 消融实验，推荐改用专用 `solo` GPU worker：
+
+```bash
+redis-server --daemonize yes
+bash scripts/start_celery_gpu_worker.sh
+```
+
 该脚本会：
 
 - 尝试进入 conda base 环境
 - 执行 `python scripts/patch_fairseq_py311.py`
 - 设置真实 So-VITS-SVC 所需环境变量
 - 以 `uvicorn app.main:app --host 0.0.0.0 --port 8000` 启动后端
+
+重要说明：
+
+- Redis 不暴露公网。
+- Celery worker 不暴露公网。
+- GPU worker 必须与 FastAPI 使用同一套 `SOVITS_*` 环境变量。
+- 如果继续使用默认 `prefork` worker，可能在 `ForkPoolWorker` 子进程里出现 CUDA 不可见或多任务争用问题。
+- 因此，答辩演示中的真实 GPU 推理与消融实验，优先使用 `solo` GPU worker。
 
 ## 3. 一键启动前端
 
@@ -112,12 +127,13 @@ bash scripts/run_sovits_real_cuda_check.sh /path/to/input.wav /tmp/custom_output
 - `torchaudio` warning：属于 deprecation warning，不影响当前 `return_code=0` 的成功推理。
 - 文本编码或 Adapter 显示降级：检查本地 `sentence-transformers` 模型缓存是否存在，并查看 `runtime/debug/<task_id>/style_embedding.json` 与 `style_adapter_output.json`。
 - 想确认任务是否走 Celery：查看任务结果里的 `task_backend_mode`，以及 `runtime/debug/<task_id>/` 是否持续刷新。
+- 想确认任务是否真的走到 GPU worker：查看 `runtime/debug/<task_id>/sovits_command.txt` 中的 `SOVITS_DEVICE`、`CUDA_VISIBLE_DEVICES`、`return_code` 与 `stderr`。
 
 ## 9. 当前验证结果
 
-- backend pytest：`102 passed`
+- backend pytest：`109 passed, 9 warnings`
 - frontend build：通过
-- frontend test：`6 passed`
+- frontend test：`9 passed`
 - Node 当前版本：`20.16.0`
 - Vite 推荐版本：`20.19+` 或 `22.12+`
 - 当前结论：虽然 Node 版本低于推荐值，但前端构建与前端测试都已通过；后续仍建议升级 Node
@@ -126,3 +142,17 @@ bash scripts/run_sovits_real_cuda_check.sh /path/to/input.wav /tmp/custom_output
 
 - 当前结果文档：`docs/subjective_eval_results.md`
 - 当前状态：3 个真实任务已预填基础信息，评分待人工填写
+
+## 11. 评价脚本
+
+如需补论文/答辩中的评价材料，可运行：
+
+```bash
+python scripts/run_objective_evaluation.py
+python scripts/aggregate_subjective_scores.py
+```
+
+输出说明：
+
+- 客观评价会生成 `evaluation/objective_results.json` 与 `docs/objective_evaluation_report.md`
+- 若尚未采集真实主观听评 CSV，主观聚合脚本会输出“未找到真实主观听评数据，已跳过主观结果统计。”

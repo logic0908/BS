@@ -32,10 +32,15 @@ So-VITS-SVC 属于 Singing Voice Conversion，而不是文本到语音合成。�
 
 - 可以说：本系统默认链路采用 `final_primary/lain` 保证稳定演示，同时新增 `final_male_youth/Nova_Adult` 与 `final_male_powerful/AY` 作为通过本地真实推理验证的专用男声 preset，用于展示系统从单模型演示向多模型风格 preset 扩展的能力。
 - 可以说：`final_male_youth` 与 `final_male_powerful` 当前已经通过本地真实 So-VITS-SVC smoke test，但这只证明推理链路可运行，主观效果仍需人工听评，且 license_unknown 不适合公开传播。
+- 可以说：系统已经具备客观风格证据面板，可以展示输入/输出音频在音高、能量、亮度、厚度、柔和度等指标上的变化趋势。
+- 可以说：style-analysis sidecar 增强了系统可解释性，尤其适合在听感差异不够明显时辅助展示“是否朝提示词方向变化”。
+- 可以说：当前已有自动化测试验证该 sidecar 不阻断播放和下载主流程。
 - 不能说：所有风格都已真实覆盖。
 - 不能说：女声 preset 已接入。
 - 不能说：已完成 So-VITS-SVC 网络内部 Bias/Scale 注入。
 - 不能说：`license_unknown` 模型的公开商用授权已经完全清晰。
+- 不能说：客观指标已经等价于主观听感。
+- 不能说：已经拿到了正式主观评分结果，如果实际上还没有真实问卷数据。
 
 ## 6. 后续工作
 
@@ -44,3 +49,10 @@ So-VITS-SVC 属于 Singing Voice Conversion，而不是文本到语音合成。�
 - 将 Adapter 输出的 Bias / Scale 注入 So-VITS-SVC 网络中间层。
 - 扩展并 smoke test 多风格模型 preset。
 - 增加更丰富的客观与主观评价指标。
+
+## 7. 评价模块答辩口径
+
+- 当前客观评价由 `POST /api/v1/style-analysis/compare` 和前端 `StyleEvidencePanel` 组成。
+- 当前客观指标包括 F0、RMS、频谱质心、频段能量、过零率，以及 brightness / energy / softness / thickness / pitch_height 等启发式风格特征。
+- 这些指标用于辅助展示趋势和可解释性，不替代人工听评。
+- 当前主观评价仍处于“模板、采集方案、统计脚本已就绪”的状态；若未采集真实问卷数据，应明确表述为“待采集”。

@@ -58,6 +58,7 @@
   - `success=true`
 - `tech_villager` 仅作为技术验收 fallback，不是默认最终模型。
 - Redis/Celery 已完成真实联调。
+- 普通 Celery worker 仍保留，但真实 GPU 推理、smoke test 与 v1.3 消融实验推荐使用 `solo` GPU worker，避免 `prefork` 子进程影响 CUDA 可见性。
 - TextStyleEncoder 已接入。
 - 训练型 TextStyleAdapter 已接入，在线策略为 `trained` 优先、失败回退 `rule_based`。
 - `style_adapter_pairs` 数据集已扩展到 `56` 条。
@@ -92,8 +93,8 @@
   - `speaker=lain`
   - `duration_consistency=1.0`
   - `possible_dropouts=false`
-- 后端测试：`PYTHONPATH=/home/featurize/work/BS/backend pytest backend/tests -q` 当前为 `102 passed`，并伴随环境级 warnings。
-- 前端测试：`cd frontend && npm run test` 当前为 `6 passed`。
+- 后端测试：`PYTHONPATH=/home/featurize/work/BS/backend pytest backend/tests -q` 当前验证结果为 `109 passed, 9 warnings`。
+- 前端测试：`cd frontend && npm run test` 当前验证结果为 `9 passed`。
 - 前端 `build` 已成功，但当前 Node `20.16.0` 低于 Vite 推荐版本 `20.19+` / `22.12+`，属于环境提示，不是功能失败；后续仍建议升级 Node。
 
 ## 3. 系统架构
@@ -275,6 +276,7 @@ BS/
 ├── scripts/
 │   ├── start_real_svc_demo.sh
 │   ├── start_celery_worker.sh
+│   ├── start_celery_gpu_worker.sh
 │   ├── start_frontend_demo.sh
 │   ├── prepare_text_encoder.py
 │   ├── build_style_adapter_dataset.py
@@ -352,6 +354,8 @@ BS/
 - 前端 Vite 实际监听：`0.0.0.0:3001`
 - Redis 仅用于 Celery broker/backend
 - Celery worker 仅为服务器内部后台进程
+- Redis 不暴露公网
+- Celery worker 不暴露公网
 
 ### 8.1 Featurize 推荐启动顺序
 
@@ -373,6 +377,8 @@ PONG
 
 #### 终端 2：Celery worker
 
+普通方式：
+
 ```bash
 cd /home/featurize/work/BS
 export PYTHONPATH=/home/featurize/work/BS/backend:$PYTHONPATH
@@ -381,6 +387,13 @@ export SOVITS_MOCK=false
 export SOVITS_DEVICE=cuda
 export NUMBA_CACHE_DIR=/home/featurize/work/BS/runtime/numba_cache
 celery -A app.core.celery_app.celery_app worker --loglevel=info -Q svc
+```
+
+GPU 推理、smoke test 和 v1.3 消融实验推荐方式：
+
+```bash
+cd /home/featurize/work/BS
+bash scripts/start_celery_gpu_worker.sh
 ```
 
 预期看到：
@@ -394,6 +407,8 @@ celery -A app.core.celery_app.celery_app worker --loglevel=info -Q svc
 - 后端代码内部使用 `from app.xxx import ...`，所以 Celery worker 启动时必须把 `backend/` 加入 `PYTHONPATH`。
 - 如果没有设置 `PYTHONPATH=/home/featurize/work/BS/backend:$PYTHONPATH`，常见报错是 `ModuleNotFoundError: No module named 'app'`。
 - worker 和 FastAPI 必须使用同一套 `SOVITS_*` 环境变量，否则可能误走 mock 分支。
+- `solo` GPU worker 会固定 `CUDA_VISIBLE_DEVICES=0`、`NVIDIA_VISIBLE_DEVICES=0`、`PYTORCH_NVML_BASED_CUDA_CHECK=1`。
+- 如果继续使用默认 `prefork`，真实 So-VITS-SVC 任务可能在 `ForkPoolWorker` 子进程里出现 CUDA 不可见或多任务争用问题。
 
 #### 终端 3：FastAPI 后端
 
@@ -451,6 +466,13 @@ bash scripts/start_real_svc_demo.sh
 ```bash
 cd /home/featurize/work/BS
 bash scripts/start_celery_worker.sh
+```
+
+GPU 推理与消融实验推荐改用：
+
+```bash
+cd /home/featurize/work/BS
+bash scripts/start_celery_gpu_worker.sh
 ```
 
 详细步骤可参考：[Celery/Redis 运行手册](docs/celery_redis_runbook.md)、[So-VITS-SVC 真实推理说明](docs/sovits_real_inference.md)。
@@ -736,11 +758,32 @@ python scripts/eval_text_style_adapter.py
 
 当前主观评价结果文档见：[主观评价结果](docs/subjective_eval_results.md)。
 
+新增论文/答辩评价闭环文档：
+
+- [总体评价方案](docs/evaluation_plan.md)
+- [客观评价报告](docs/objective_evaluation_report.md)
+- [主观评价方案](docs/subjective_evaluation_plan.md)
+- [性能评价报告](docs/performance_report.md)
+- [evaluation 目录说明](evaluation/README.md)
+
 导出主观评价包：
 
 ```bash
 python scripts/export_subjective_eval_pack.py
 ```
+
+评价与实验脚本：
+
+```bash
+python scripts/run_objective_evaluation.py
+python scripts/aggregate_subjective_scores.py
+```
+
+说明：
+
+- 客观评价由 style-analysis sidecar 自动生成，输出 `evaluation/objective_results.json` 与 `docs/objective_evaluation_report.md`。
+- 主观评价当前只提供问卷模板和聚合脚本；正式结果必须来自人工采集的真实 CSV，不能伪造。
+- 性能评价当前提供 `docs/performance_report.md` 模板，并写入 smoke test 与测试快照中已能直接复查的真实数据。
 
 当前 3 个真实 Celery 任务如下：
 
@@ -766,6 +809,15 @@ python scripts/export_subjective_eval_pack.py
 - 原旋律保持
 - 总体满意度
 
+新的轻量化正式主观评价字段见 `evaluation/subjective_template.csv`：
+
+- `naturalness_score`
+- `prompt_match_score`
+- `style_change_score`
+- `audio_quality_score`
+- `preference`
+- `comments`
+
 目前 `docs/subjective_eval_results.md` 已预填这 3 个真实任务的基础信息，但主观评分仍待人工填写汇总。
 
 ## 12. 测试与验证
@@ -777,7 +829,7 @@ python -m compileall backend/app scripts/*.py
 PYTHONPATH=/home/featurize/work/BS/backend pytest backend/tests -q
 ```
 
-当前结果：`99 passed`
+当前结果：`109 passed, 9 warnings`
 
 前端：
 
@@ -787,7 +839,7 @@ npm run build
 npm run test
 ```
 
-当前结果：`6 passed`
+当前结果：`build passed`，`9 passed`
 
 脚本语法检查：
 

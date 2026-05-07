@@ -16,6 +16,16 @@
 
 当前系统仍然是“参数级/旁路控制”的 TextStyleAdapter，不是 So-VITS-SVC 网络内部 Bias/Scale 条件注入。
 
+## 当前已完成数据快照
+
+- backend pytest：`109 passed, 9 warnings`
+- frontend build：`passed`
+- frontend test：`9 passed`
+- `final_male_powerful` smoke test：`success=true`
+- style-analysis sidecar：已实现，并由后端/前端测试覆盖
+- 当前 Node 版本：`20.16.0`
+- Vite 推荐 Node：`20.19+` 或 `22.12+`
+
 ## Frontend Demo Workbench
 
 - 当前前端已重构为 `Header / Demo Workspace / Audio Compare / Advanced Details` 四区正式演示工作台。
@@ -190,6 +200,8 @@
 - 当前结果文档：`docs/subjective_eval_results.md`
 - 自动导出脚本：`python scripts/export_subjective_eval_pack.py`
 - 最新导出包：`runtime/eval_reports/latest_subjective_eval_pack.md`
+- 新的正式评价规划文档：`docs/subjective_evaluation_plan.md`
+- 主观聚合脚本：`python scripts/aggregate_subjective_scores.py`
 
 当前 `docs/subjective_eval_results.md` 已写入 3 个真实任务的基础信息，但评分列保持为空，待人工填写。
 
@@ -215,12 +227,26 @@
 - 当前 Adapter 仍是参数级控制，不是 So-VITS-SVC 网络内部条件注入
 - 当前多风格 preset 仍有多个占位项未绑定真实模型
 - 主观评分模板和导出包已经具备，但人工听评结果还需要继续填写和汇总
+- style-analysis 客观指标是启发式辅助证据，不能直接等价为主观听感或论文中的最终听感结论
+
+## Evaluation Workflow
+
+当前新增了一套更适合论文/答辩使用的评价闭环：
+
+- 总体方案：`docs/evaluation_plan.md`
+- 客观评价报告：`docs/objective_evaluation_report.md`
+- 主观评价方案：`docs/subjective_evaluation_plan.md`
+- 性能评价：`docs/performance_report.md`
+- 客观评价脚本：`python scripts/run_objective_evaluation.py`
+- 主观聚合脚本：`python scripts/aggregate_subjective_scores.py`
+- 客观结果 JSON：`evaluation/objective_results.json`
+- 主观模板 CSV：`evaluation/subjective_template.csv`
 
 ## Validation Snapshot
 
-- backend pytest：`102 passed`
+- backend pytest：`109 passed, 9 warnings`
 - frontend build：通过
-- frontend test：`6 passed`
+- frontend test：`9 passed`
 - 当前 Node 版本：`20.16.0`
 - Vite 推荐 Node：`20.19+` 或 `22.12+`
 - 当前结论：虽然 Node 版本低于推荐值，但前端构建仍已通过；后续建议升级 Node 以减少 Vite 环境 warning

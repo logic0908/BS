@@ -1,0 +1,40 @@
+{
+  "pairs": [
+    {
+      "case_id": "final_male_powerful_smoke",
+      "prompt_text": "低沉、成熟、厚重男声",
+      "model_preset_id": "final_male_powerful",
+      "input_path": "/home/featurize/work/BS/StyleSinger/test/test.wav",
+      "output_path": "/home/featurize/work/BS/so-vits-svc/results/smoke-final_male_powerful-1777912011.wav_0key_AY_sovits_pm.flac",
+      "source": "smoke_report",
+      "notes": "Derived from the final_male_powerful smoke test because /tmp smoke output is ephemeral."
+    },
+    {
+      "case_id": "final_primary_demo_b7c03828",
+      "prompt_text": "清亮、少年感、男声",
+      "model_preset_id": "final_primary",
+      "input_path": "/home/featurize/work/BS/runtime/debug/b7c03828-e10d-4552-ac51-63f9dececfba/vocals.wav",
+      "output_path": "/home/featurize/work/BS/runtime/debug/b7c03828-e10d-4552-ac51-63f9dececfba/converted.wav",
+      "source": "task_store",
+      "notes": "Real succeeded Celery task from the default final_primary demo path."
+    },
+    {
+      "case_id": "final_primary_demo_1a9d1b8b",
+      "prompt_text": "温柔、气声、抒情女声",
+      "model_preset_id": "final_primary",
+      "input_path": "/home/featurize/work/BS/runtime/debug/1a9d1b8b-a090-448e-b6e8-1252dc2ff5d3/vocals.wav",
+      "output_path": "/home/featurize/work/BS/runtime/debug/1a9d1b8b-a090-448e-b6e8-1252dc2ff5d3/converted.wav",
+      "source": "task_store",
+      "notes": "Real succeeded Celery task from the default final_primary demo path."
+    },
+    {
+      "case_id": "final_primary_demo_4e703d1d",
+      "prompt_text": "低沉、成熟、厚重男声",
+      "model_preset_id": "final_primary",
+      "input_path": "/home/featurize/work/BS/runtime/debug/4e703d1d-4af6-475b-9c29-a7a8fd0f8b3b/vocals.wav",
+      "output_path": "/home/featurize/work/BS/runtime/debug/4e703d1d-4af6-475b-9c29-a7a8fd0f8b3b/converted.wav",
+      "source": "task_store",
+      "notes": "Real succeeded Celery task from the default final_primary demo path."
+    }
+  ]
+}
