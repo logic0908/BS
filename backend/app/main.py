@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints import synthesis
+from app.api.endpoints import style_analysis
 from app.models_svc.stylesinger_wrapper import stylesinger_service
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(synthesis.router, prefix="/api/v1", tags=["synthesis"])
+app.include_router(style_analysis.router, prefix="/api/v1", tags=["style-analysis"])
 
 @app.get("/")
 async def root():

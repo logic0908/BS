@@ -4,12 +4,15 @@ import axios from 'axios'
 import { ChevronDown, Cpu, ShieldAlert, Sparkles, Wand2 } from 'lucide-react'
 
 import './App.css'
+import { compareStyleEvidence } from './api/styleAnalysis'
 import AudioComparePanel from './components/AudioComparePanel'
 import FileUpload from './components/FileUpload'
+import StyleEvidencePanel from './components/StyleEvidencePanel'
 import {
   AppStatus,
   STYLE_PRESETS,
   type AudioFile,
+  type StyleEvidenceCompareResponse,
   type InputQualitySummary,
   type ModelPresetCollection,
   type ModelPresetStatus,
@@ -30,6 +33,13 @@ type ResultFetchPayload = {
 type DebugArtifacts = {
   extracted_features?: string
   quality_report?: string
+}
+
+type StyleEvidenceRequest = {
+  inputPath: string
+  outputPath: string
+  promptText: string
+  modelPresetId: string | null
 }
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -97,6 +107,10 @@ function App() {
   const [selectedStyle, setSelectedStyle] = useState<StyleSelection | null>(null)
   const [taskSnapshot, setTaskSnapshot] = useState<TaskResponse | null>(null)
   const [inputQuality, setInputQuality] = useState<InputQualitySummary | null>(null)
+  const [styleEvidence, setStyleEvidence] = useState<StyleEvidenceCompareResponse | null>(null)
+  const [styleEvidenceLoading, setStyleEvidenceLoading] = useState(false)
+  const [styleEvidenceError, setStyleEvidenceError] = useState<string | null>(null)
+  const [styleEvidenceRequest, setStyleEvidenceRequest] = useState<StyleEvidenceRequest | null>(null)
 
   const isUploading = status === AppStatus.UPLOADING
   const isConverting = status === AppStatus.CONVERTING
@@ -190,6 +204,65 @@ function App() {
     }
   }, [sovitsCheck?.auto_predict_f0, sovitsCheck?.clip_seconds, sovitsCheck?.f0_method, sovitsCheck?.pad_seconds, sovitsCheck?.slice_db])
 
+  useEffect(() => {
+    if (status !== AppStatus.COMPLETED || !styleEvidenceRequest) {
+      setStyleEvidenceLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setStyleEvidenceLoading(true)
+    setStyleEvidenceError(null)
+
+    void compareStyleEvidence({
+      input_path: styleEvidenceRequest.inputPath,
+      output_path: styleEvidenceRequest.outputPath,
+      prompt_text: styleEvidenceRequest.promptText,
+      model_preset_id: styleEvidenceRequest.modelPresetId ?? undefined,
+    })
+      .then((response) => {
+        if (cancelled) {
+          return
+        }
+        if (!response?.ok) {
+          setStyleEvidence(null)
+          setStyleEvidenceError('风格证据分析未返回有效结果，但转换结果仍可播放。')
+          return
+        }
+        setStyleEvidence(response)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStyleEvidence(null)
+          setStyleEvidenceError('风格证据分析失败，但转换结果仍可播放。')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setStyleEvidenceLoading(false)
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    status,
+    styleEvidenceRequest,
+  ])
+
+  const clearStyleEvidenceState = () => {
+    setStyleEvidence(null)
+    setStyleEvidenceError(null)
+    setStyleEvidenceLoading(false)
+    setStyleEvidenceRequest(null)
+  }
+
+  const updatePromptText = (nextPrompt: string) => {
+    setPromptText(nextPrompt)
+    clearStyleEvidenceState()
+  }
+
   const handleFileSelect = async (file: File) => {
     if (file.size > 10 * 1024 * 1024) {
       setErrorMsg('上传音频文件大小不能超过 10MB。')
@@ -212,6 +285,7 @@ function App() {
     setFeatureDebugArtifacts(null)
     setFeatureQualityMessage(null)
     setInputQuality(null)
+    clearStyleEvidenceState()
     setErrorMsg(null)
     setStatus(AppStatus.UPLOADING)
     setTaskStatusMsg(isVocalOnly ? '正在标准化干声并生成输入质量报告…' : '正在分离/标准化人声并生成输入质量报告…')
@@ -267,13 +341,16 @@ function App() {
       throw new Error('原始音频缺失。')
     }
     const convertedUrl = window.URL.createObjectURL(payload.blob)
+    const metadata = normalizeResultMetadata(payload.taskData)
     setResult({
       originalUrl,
       convertedUrl,
-      metadata: normalizeResultMetadata(payload.taskData),
+      metadata,
     })
     setStatus(AppStatus.COMPLETED)
     setTaskStatusMsg('转换完成，可以在下方进行 A/B 对比。')
+    clearStyleEvidenceState()
+    setStyleEvidenceRequest(buildStyleEvidenceRequest(metadata, promptText, modelPresetId))
   }
 
   const handleSvcConvert = async () => {
@@ -292,6 +369,7 @@ function App() {
     setTaskStatusMsg('正在创建 So-VITS-SVC 任务…')
     setTaskSnapshot(null)
     setErrorMsg(null)
+    clearStyleEvidenceState()
 
     try {
       const response = await axios.post('/api/v1/convert', {
@@ -369,6 +447,7 @@ function App() {
     setTaskStatusMsg('正在创建 StyleSinger 高级实验任务…')
     setTaskSnapshot(null)
     setErrorMsg(null)
+    clearStyleEvidenceState()
 
     try {
       const formData = new FormData()
@@ -397,6 +476,7 @@ function App() {
   }
 
   const appendPromptTag = (tag: string) => {
+    clearStyleEvidenceState()
     setPromptText((current) => {
       const trimmed = current.trim()
       if (!trimmed) {
@@ -448,6 +528,7 @@ function App() {
     setSelectedStyle(null)
     setTaskSnapshot(null)
     setInputQuality(null)
+    clearStyleEvidenceState()
   }
 
   return (
@@ -584,7 +665,7 @@ function App() {
                     aria-label="style-prompt"
                     className="styled-textarea"
                     value={promptText}
-                    onChange={(event) => setPromptText(event.target.value)}
+                    onChange={(event) => updatePromptText(event.target.value)}
                     disabled={isConverting}
                     placeholder="例如：清亮、少年感、带一点气声"
                   />
@@ -842,6 +923,24 @@ function App() {
             />
           </section>
 
+          {(styleEvidenceLoading || styleEvidenceError || styleEvidence) && (
+            <section className="surface-card">
+              {styleEvidenceLoading ? (
+                <div className="notice-card notice-info">正在分析转换前后风格证据...</div>
+              ) : null}
+              {styleEvidenceError ? <div className="notice-card notice-warning">{styleEvidenceError}</div> : null}
+              {styleEvidence ? (
+                <StyleEvidencePanel
+                  analysis={styleEvidence}
+                  promptText={promptText}
+                  fallbackNotice={
+                    presetFallbackUsed ? '本次输出来自 fallback 后的实际模型，不能证明请求 preset 已接入。' : null
+                  }
+                />
+              ) : null}
+            </section>
+          )}
+
           <details
             className="surface-card details-shell"
             open={techDetailsOpen}
@@ -1045,6 +1144,25 @@ function FeatureField({ label, value }: { label: string; value: string }) {
   )
 }
 
+function buildStyleEvidenceRequest(
+  metadata: ResultMetadata,
+  promptText: string,
+  fallbackModelPresetId: string,
+): StyleEvidenceRequest | null {
+  const normalizedPrompt = promptText.trim()
+  const inputPath = metadata.input_vocals_path ?? metadata.input_audio_path ?? null
+  const outputPath = metadata.final_output_path ?? null
+  if (!normalizedPrompt || !inputPath || !outputPath) {
+    return null
+  }
+  return {
+    inputPath,
+    outputPath,
+    promptText: normalizedPrompt,
+    modelPresetId: metadata.effective_model_preset_id ?? metadata.model_preset_id ?? fallbackModelPresetId,
+  }
+}
+
 function normalizeResultMetadata(taskData?: TaskResponse | null): ResultMetadata {
   const taskMeta = (taskData?.result_metadata ?? taskData?.engine_details ?? {}) as Record<string, unknown>
   return {
@@ -1092,6 +1210,8 @@ function normalizeResultMetadata(taskData?: TaskResponse | null): ResultMetadata
     adapter_fallback_reason: stringOrNull(taskMeta.adapter_fallback_reason ?? taskData?.adapter_fallback_reason),
     audio_quality_summary: objectOrNull(taskMeta.audio_quality_summary ?? taskData?.audio_quality_summary) as ResultMetadata['audio_quality_summary'],
     audio_quality_report_path: stringOrNull(taskMeta.audio_quality_report_path ?? taskData?.audio_quality_report_path),
+    input_audio_path: stringOrNull(taskMeta.input_audio_path ?? taskData?.input_audio_path),
+    input_vocals_path: stringOrNull(taskMeta.input_vocals_path ?? taskData?.input_vocals_path),
     text_style_adapter_notice: stringOrNull(taskMeta.text_style_adapter_notice ?? taskData?.text_style_adapter_notice),
     called_inference_main: coerceBoolean(taskMeta.called_inference_main),
     input_quality_summary: objectOrNull(taskMeta.input_quality_summary ?? taskData?.input_quality_summary) as InputQualitySummary | null,

@@ -405,6 +405,8 @@ class SvcTaskService:
                     "text_style_adapter_notice": "当前 TextStyleAdapter v1 将提示词语义映射为模型 preset 与转换参数；后续可扩展为网络中间层条件注入。",
                     "input_quality_summary": upload.input_quality_summary,
                     "input_quality_report_path": upload.input_quality_report_path,
+                    "input_audio_path": upload.input_path,
+                    "input_vocals_path": upload.vocals_path,
                     "effective_style_strength": round(effective_style_strength, 4),
                     "f0_method": (conversion_params_summary or {}).get("f0_method"),
                     "f0_fallback_reason": (conversion_params_summary or {}).get("f0_fallback_reason"),
@@ -420,6 +422,8 @@ class SvcTaskService:
                     "preset_fallback_reason": (conversion_params_summary or {}).get("preset_fallback_reason"),
                 }
             )
+            engine_details.setdefault("selected_output", output)
+            engine_details.setdefault("final_output_path", output)
 
             task.status = "succeeded"
             task.stage = "completed"
@@ -502,6 +506,8 @@ class SvcTaskService:
                         "preset_fallback_reason": conversion_params_summary.get("preset_fallback_reason"),
                     }
                 )
+            base_details.setdefault("input_audio_path", upload.input_path)
+            base_details.setdefault("input_vocals_path", upload.vocals_path)
             task.engine_details = base_details
             self._write_task_config(
                 debug_dir=debug_dir,

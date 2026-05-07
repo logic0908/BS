@@ -193,6 +193,8 @@ def _enhanced_error_detail(
 def _normalize_svc_task_payload(task_id: str, task) -> dict:
     result_url = f"/api/v1/tasks/{task_id}/result" if task.status == "succeeded" else None
     result_metadata = dict(task.engine_details or {})
+    if task.output_path:
+        result_metadata.setdefault("final_output_path", task.output_path)
     return {
         "task_id": task.task_id,
         "engine": task.engine,
@@ -253,6 +255,8 @@ def _normalize_svc_task_payload(task_id: str, task) -> dict:
         "adapter_fallback_reason": result_metadata.get("adapter_fallback_reason"),
         "audio_quality_summary": result_metadata.get("audio_quality_summary"),
         "audio_quality_report_path": result_metadata.get("audio_quality_report_path"),
+        "input_audio_path": result_metadata.get("input_audio_path"),
+        "input_vocals_path": result_metadata.get("input_vocals_path"),
         "text_style_adapter_notice": result_metadata.get("text_style_adapter_notice"),
         "f0_method": result_metadata.get("f0_method"),
         "f0_fallback_reason": result_metadata.get("f0_fallback_reason"),
