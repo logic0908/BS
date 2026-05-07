@@ -13,10 +13,14 @@ from fastapi import BackgroundTasks, UploadFile
 from app.api.endpoints import synthesis as synthesis_endpoint
 from app.api.endpoints.synthesis import ConvertRequest
 from app.models_svc.sovits_wrapper import SoVitsSvcEngine, SoVitsSvcError
+from app.models_svc.text_style_adapter import TextStyleAdapterResult
 from app.services import style_library
 from app.services import svc_model_presets
+from app.services.svc_smoke_validation import build_smoke_report, resolve_task_debug_dir
 import app.services.svc_task_service as svc_task_service_module
 from app.services.svc_task_service import TaskState, UploadRecord, svc_task_service
+from app.services.text_style_encoder import TextStyleEmbedding
+from app.workers.svc_tasks import process_svc_task
 from app.models_svc.stylesinger_wrapper import stylesinger_service
 
 
@@ -76,24 +80,62 @@ def _write_preset_config(path: Path, final_model: Path, final_config: Path, tech
                         "preset_id": "final_primary",
                         "display_name": "最终演示 So-VITS-SVC 模型",
                         "description": "用于毕业设计默认演示的目标歌声转换模型。",
+                        "style_tags": ["baseline", "demo", "general"],
                         "model_path": str(final_model),
                         "config_path": str(final_config),
                         "speaker": "final_spk",
                         "device": "cuda",
+                        "is_configured": True,
                         "is_demo_quality": True,
+                        "smoke_test_passed": True,
                         "is_technical_validation_only": False,
                         "source_repo": "owner/final",
                         "license": "mit",
                     },
                     {
+                        "preset_id": "final_male_youth",
+                        "display_name": "少年感男声目标模型",
+                        "description": "预留给更贴近少年感男声的目标模型。",
+                        "style_tags": ["male", "youth", "bright"],
+                        "model_path": "",
+                        "config_path": "",
+                        "speaker": "",
+                        "device": "cuda",
+                        "is_configured": False,
+                        "is_demo_quality": False,
+                        "smoke_test_passed": False,
+                        "is_technical_validation_only": False,
+                        "source_repo": "",
+                        "license": "",
+                    },
+                    {
+                        "preset_id": "final_male_powerful",
+                        "display_name": "力量感男声目标模型",
+                        "description": "预留给更贴近厚重/力量感男声的目标模型。",
+                        "style_tags": ["male", "powerful", "thick"],
+                        "model_path": str(tech_model),
+                        "config_path": str(tech_config),
+                        "speaker": "AY",
+                        "device": "cuda",
+                        "is_configured": False,
+                        "is_demo_quality": False,
+                        "smoke_test_passed": False,
+                        "is_technical_validation_only": False,
+                        "source_repo": "owner/powerful",
+                        "license": "license_unknown",
+                    },
+                    {
                         "preset_id": "tech_villager",
                         "display_name": "技术验收模型：Minecraft Villager",
                         "description": "仅用于验证真实 So-VITS-SVC CUDA 推理链路。",
+                        "style_tags": ["technical", "validation", "fallback"],
                         "model_path": str(tech_model),
                         "config_path": str(tech_config),
                         "speaker": "villager",
                         "device": "cuda",
+                        "is_configured": True,
                         "is_demo_quality": False,
+                        "smoke_test_passed": True,
                         "is_technical_validation_only": True,
                         "source_repo": "owner/tech",
                         "license": "cc-by-nc-sa-4.0",
@@ -242,7 +284,22 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
     monkeypatch.setenv("SOVITS_SPEAKER", "villager")
     monkeypatch.setenv("SOVITS_DEVICE", "cuda")
 
+    runtime_context: dict[str, object] = {}
+
     def _fake_run(command, cwd, capture_output, text, timeout, env):
+        if command[:1] == ["nvidia-smi"]:
+            if "--query-gpu=timestamp,name,utilization.gpu,memory.used,memory.total" in command:
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="timestamp, name, utilization.gpu [%], memory.used [MiB], memory.total [MiB]\n2026/05/02 14:00:00.000, RTX, 88 %, 4096 MiB, 24564 MiB\n",
+                    stderr="",
+                )
+            if "--query-compute-apps=pid,process_name,used_memory" in command:
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="pid, process_name, used_memory [MiB]\n12345, python, 4096 MiB\n",
+                    stderr="",
+                )
         result_path = files["repo_dir"] / "results" / "task_123_0key_villager_sovits_pm.flac"
         _write_flac(result_path)
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
@@ -260,6 +317,7 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
         output_path=str(files["output_path"]),
         debug_dir=str(tmp_path / "debug"),
         task_id="task-123",
+        runtime_context=runtime_context,
     )
 
     assert output == str(files["output_path"])
@@ -270,7 +328,12 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
     raw_copy = files["repo_dir"] / "raw" / "task-123.wav"
     assert raw_copy.exists()
     assert raw_copy.read_bytes() == files["input_path"].read_bytes()
-    command = run_mock.call_args.kwargs["args"] if "args" in run_mock.call_args.kwargs else run_mock.call_args.args[0]
+    inference_call = next(
+        call
+        for call in run_mock.call_args_list
+        if (call.kwargs["args"] if "args" in call.kwargs else call.args[0])[0] != "nvidia-smi"
+    )
+    command = inference_call.kwargs["args"] if "args" in inference_call.kwargs else inference_call.args[0]
     assert "-i" not in command
     assert "-o" not in command
     assert "-n" in command
@@ -290,6 +353,16 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
     assert command_log["audio_prepare_method"] == "soundfile_reencode_wav"
     assert command_log["selected_output"].endswith(".flac")
     assert command_log["final_output_path"] == str(files["output_path"])
+    assert command_log["SOVITS_DEVICE"] == "cuda"
+    assert command_log["command_includes_d_cuda"] is True
+    assert command_log["gpu_telemetry_debug_path"].endswith("gpu_telemetry.txt")
+    assert runtime_context["result_metadata"]["gpu_telemetry_debug_path"].endswith("gpu_telemetry.txt")
+    telemetry_text = (tmp_path / "debug" / "gpu_telemetry.txt").read_text(encoding="utf-8")
+    assert "SOVITS_DEVICE=cuda" in telemetry_text
+    assert "command_includes_d_cuda=true" in telemetry_text
+    assert "[before_inference]" in telemetry_text
+    assert "[after_inference]" in telemetry_text
+    assert "Do not use the pre-run snapshot alone" in telemetry_text
 
 
 def test_active_preset_is_used_before_legacy_sovits_env(tmp_path, monkeypatch):
@@ -337,6 +410,317 @@ def test_explicit_model_preset_id_can_select_tech_fallback(tmp_path, monkeypatch
     assert runtime_config.speaker == "villager"
     assert runtime_config.model_preset_id == "tech_villager"
     assert runtime_config.is_technical_validation_only is True
+
+
+def test_unconfigured_preset_is_blocked_before_inference(tmp_path, monkeypatch):
+    files = _prepare_runtime_files(tmp_path)
+    final_model = tmp_path / "final.pth"
+    final_model.write_text("final", encoding="utf-8")
+    final_config = tmp_path / "final_config.json"
+    final_config.write_text(
+        json.dumps({"data": {"sampling_rate": 44100}, "model": {"speech_encoder": "hubertsoft"}, "spk": {"final_spk": 0}}),
+        encoding="utf-8",
+    )
+    preset_path = tmp_path / "svc_model_presets.json"
+    _write_preset_config(preset_path, final_model, final_config, files["model_path"], files["config_path"])
+    monkeypatch.setattr(svc_model_presets, "PRESETS_PATH", preset_path)
+    monkeypatch.setenv("SOVITS_MOCK", "false")
+    monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))
+    monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(files["script_path"]))
+
+    engine = SoVitsSvcEngine()
+    with pytest.raises(SoVitsSvcError) as exc_info:
+        engine.convert(
+            input_vocals_path=str(files["input_path"]),
+            prompt_text="少年感男声",
+            style_strength=0.7,
+            output_path=str(files["output_path"]),
+            debug_dir=str(tmp_path / "debug"),
+            style_preset={"model_preset_id": "final_male_youth"},
+            conversion_params={"f0_method": "rmvpe"},
+        )
+
+    assert exc_info.value.code == "SVC_MODEL_PRESET_NOT_CONFIGURED"
+
+
+def test_convert_route_regular_task_still_blocks_unconfigured_final_male_powerful(mocker, tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setattr(svc_task_service_module, "RUNTIME_DEBUG_DIR", str(runtime_dir))
+    svc_task_service._uploads.clear()
+    svc_task_service._tasks.clear()
+
+    files = _prepare_runtime_files(tmp_path)
+    _prepare_valid_sovits_assets(files, speaker="AY")
+    final_model = tmp_path / "final.pth"
+    final_model.write_text("final", encoding="utf-8")
+    final_config = tmp_path / "final_config.json"
+    final_config.write_text(
+        json.dumps({"data": {"sampling_rate": 44100}, "model": {"speech_encoder": "hubertsoft"}, "spk": {"final_spk": 0}}),
+        encoding="utf-8",
+    )
+    preset_path = tmp_path / "svc_model_presets.json"
+    _write_preset_config(preset_path, final_model, final_config, files["model_path"], files["config_path"])
+    monkeypatch.setattr(svc_model_presets, "PRESETS_PATH", preset_path)
+    monkeypatch.setenv("SOVITS_MOCK", "false")
+    monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))
+    monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(files["script_path"]))
+
+    input_path = tmp_path / "input.wav"
+    vocals_path = tmp_path / "vocals.wav"
+    _write_wav(input_path)
+    _write_wav(vocals_path)
+    svc_task_service._uploads["vocals-locked"] = UploadRecord(
+        vocals_id="vocals-locked",
+        input_path=str(input_path),
+        vocals_path=str(vocals_path),
+        is_vocal_only=True,
+    )
+    svc_task_service._tasks["task-locked"] = TaskState(
+        task_id="task-locked",
+        status="queued",
+        message="任务已创建",
+        engine="sovits",
+        vocals_id="vocals-locked",
+        task_backend_mode="local",
+    )
+    mocker.patch(
+        "app.services.svc_task_service.style_library.retrieve_style",
+        return_value={
+            "style_id": "baseline_general",
+            "style_label": "基础通用风格",
+            "description": "通用流行 / 基础内容保持型 SVC",
+            "model_preset_id": "final_primary",
+            "model_display_name": "最终演示 So-VITS-SVC 模型",
+            "model_path": str(final_model),
+            "config_path": str(final_config),
+            "speaker": "final_spk",
+            "transpose": 0,
+            "match_score": 10,
+            "matched_keywords": ["默认"],
+            "reason": "未命中明显关键词；使用默认候选 baseline_general",
+            "model_preset_ready": True,
+            "model_preset_configured": True,
+            "current_style_has_dedicated_model": False,
+        },
+    )
+    mocker.patch(
+        "app.services.svc_task_service.text_style_encoder.encode_prompt",
+        return_value=TextStyleEmbedding(
+            embedding=(np.ones(8, dtype=np.float32) / np.sqrt(8.0)).astype(float).tolist(),
+            embedding_dim=8,
+            model_name="test-encoder",
+            prompt_text="厚重、力量感、男声",
+            normalized_prompt="厚重、力量感、男声",
+            keywords=["厚重", "力量感", "男声"],
+        ),
+    )
+    mocker.patch(
+        "app.services.svc_task_service.text_style_adapter.build_controls",
+        return_value=TextStyleAdapterResult(
+            adapter_enabled=True,
+            adapter_mode="rule_based",
+            adapter_version="v1",
+            adapter_type="rule_based",
+            adapter_checkpoint_path="",
+            trainable=False,
+            control_params={"model_preset_id": "final_male_powerful", "transpose": 0, "style_strength": 0.7},
+            override_reason="test adapter",
+        ),
+    )
+    mocker.patch(
+        "app.services.svc_task_service.style_library.apply_adapter_controls",
+        return_value={
+            "style_id": "baseline_general",
+            "style_label": "基础通用风格",
+            "description": "通用流行 / 基础内容保持型 SVC",
+            "model_preset_id": "final_male_powerful",
+            "model_display_name": "力量感男声目标模型",
+            "model_path": str(files["model_path"]),
+            "config_path": str(files["config_path"]),
+            "speaker": "AY",
+            "transpose": 0,
+            "match_score": 10,
+            "matched_keywords": ["默认"],
+            "reason": "测试覆盖未 configured preset gate",
+            "model_preset_ready": False,
+            "model_preset_configured": False,
+            "current_style_has_dedicated_model": True,
+        },
+    )
+
+    with pytest.raises(SoVitsSvcError) as exc_info:
+        svc_task_service.process_task(
+            "task-locked",
+            prompt_text="厚重、力量感、男声",
+            style_strength=0.7,
+            model_preset_id="final_male_powerful",
+        )
+
+    assert exc_info.value.code == "SVC_MODEL_PRESET_NOT_CONFIGURED"
+    task = svc_task_service.get_task("task-locked")
+    assert task is not None
+    assert task.status == "failed"
+    assert isinstance(task.error, dict)
+    assert task.error["code"] == "SVC_MODEL_PRESET_NOT_CONFIGURED"
+
+
+def test_check_sovits_env_smoke_mode_allows_unconfigured_preset_runtime_preview(tmp_path, monkeypatch):
+    files = _prepare_runtime_files(tmp_path)
+    _prepare_valid_sovits_assets(files, speaker="AY")
+    final_model = tmp_path / "final.pth"
+    final_model.write_text("final", encoding="utf-8")
+    final_config = tmp_path / "final_config.json"
+    final_config.write_text(
+        json.dumps({"data": {"sampling_rate": 44100}, "model": {"speech_encoder": "hubertsoft"}, "spk": {"final_spk": 0}}),
+        encoding="utf-8",
+    )
+    preset_path = tmp_path / "svc_model_presets.json"
+    _write_preset_config(preset_path, final_model, final_config, files["model_path"], files["config_path"])
+    monkeypatch.setattr(svc_model_presets, "PRESETS_PATH", preset_path)
+    monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))
+    monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(files["script_path"]))
+    monkeypatch.setenv("SOVITS_MODEL_PATH", str(files["model_path"]))
+    monkeypatch.setenv("SOVITS_CONFIG_PATH", str(files["config_path"]))
+    monkeypatch.setenv("SOVITS_SPEAKER", "AY")
+
+    runtime_config = SoVitsSvcEngine().resolve_runtime_config(
+        {"model_preset_id": "final_male_powerful"},
+        allow_unconfigured_preset_smoke=True,
+    )
+
+    assert runtime_config.validation_mode == "unconfigured_preset_smoke"
+    assert runtime_config.bypass_configured_gate is True
+    assert runtime_config.model_preset_id == "final_male_powerful"
+    assert runtime_config.requested_model_preset_id == "final_male_powerful"
+    assert runtime_config.model_preset_ready is True
+    assert runtime_config.model_preset_configured is False
+    assert runtime_config.model_path == str(files["model_path"])
+    assert runtime_config.config_path == str(files["config_path"])
+    assert runtime_config.speaker == "AY"
+
+
+def test_smoke_report_ignores_legacy_final_primary_debug(tmp_path):
+    project_root = tmp_path
+    legacy_debug_dir = project_root / "runtime" / "debug" / "check_sovits_env"
+    legacy_debug_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_debug_dir / "sovits_command.txt").write_text(
+        json.dumps(
+            {
+                "model_path": "/home/featurize/work/BS/local_models/sovits-final/final_primary/G_2400_infer.pth",
+                "config_path": "/home/featurize/work/BS/local_models/sovits-final/final_primary/config.json",
+                "speaker": "lain",
+                "selected_output": "test.wav_0key_lain_sovits_pm.flac",
+                "return_code": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (legacy_debug_dir / "sovits_debug.json").write_text(
+        json.dumps({"result_metadata": {"called_inference_main": True, "model_preset_id": "final_primary"}}),
+        encoding="utf-8",
+    )
+
+    task_id = "smoke-final_male_powerful-123"
+    task_debug_dir = resolve_task_debug_dir(project_root, task_id)
+    task_debug_dir.mkdir(parents=True, exist_ok=True)
+    (task_debug_dir / "sovits_command.txt").write_text(
+        json.dumps(
+            {
+                "model_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/G_15000.pth",
+                "config_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/config.json",
+                "speaker": "AY",
+                "selected_output": "smoke-final_male_powerful-123_0key_AY_sovits_pm.flac",
+                "return_code": 0,
+                "env": {
+                    "SOVITS_MODEL_PATH": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/G_15000.pth",
+                    "SOVITS_CONFIG_PATH": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/config.json",
+                    "SOVITS_SPEAKER": "AY",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (task_debug_dir / "sovits_debug.json").write_text(
+        json.dumps(
+            {
+                "runtime_config": {
+                    "model_preset_id": "final_male_powerful",
+                    "requested_model_preset_id": "final_male_powerful",
+                    "validation_mode": "unconfigured_preset_smoke",
+                    "bypass_configured_gate": True,
+                },
+                "result_metadata": {
+                    "called_inference_main": True,
+                    "model_preset_id": "final_male_powerful",
+                    "requested_model_preset_id": "final_male_powerful",
+                    "validation_mode": "unconfigured_preset_smoke",
+                    "bypass_configured_gate": True,
+                    "selected_output": "smoke-final_male_powerful-123_0key_AY_sovits_pm.flac",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output_path = project_root / "smoke.wav"
+    _write_wav(output_path)
+    report = build_smoke_report(
+        project_root=project_root,
+        preset_id="final_male_powerful",
+        expected_speaker="AY",
+        input_path=str(project_root / "input.wav"),
+        output_path=str(output_path),
+        started_at="2026-05-04T00:00:00Z",
+        stdout_path=str(project_root / "stdout.log"),
+        stderr_path=str(project_root / "stderr.log"),
+        task_id=task_id,
+        return_code=0,
+    )
+
+    assert report["success"] is True
+    assert report["resolved_model_path"].endswith("/local_models/sovits-final/final_male_powerful/G_15000.pth")
+    assert report["resolved_speaker"] == "AY"
+    assert report["command_matches_preset"] is True
+    assert report["speaker_matches_preset"] is True
+    assert report["selected_output_is_stale_legacy"] is False
+    assert report["selected_output"].endswith("AY_sovits_pm.flac")
+    assert "final_primary" not in report["resolved_model_path"]
+
+
+def test_allow_preset_fallback_uses_final_primary_without_claiming_requested_style(tmp_path, monkeypatch):
+    files = _prepare_runtime_files(tmp_path)
+    final_model = tmp_path / "final.pth"
+    final_model.write_text("final", encoding="utf-8")
+    final_config = tmp_path / "final_config.json"
+    final_config.write_text(
+        json.dumps({"data": {"sampling_rate": 44100}, "model": {"speech_encoder": "hubertsoft"}, "spk": {"final_spk": 0}}),
+        encoding="utf-8",
+    )
+    preset_path = tmp_path / "svc_model_presets.json"
+    _write_preset_config(preset_path, final_model, final_config, files["model_path"], files["config_path"])
+    monkeypatch.setattr(svc_model_presets, "PRESETS_PATH", preset_path)
+    monkeypatch.setenv("SOVITS_MOCK", "true")
+
+    runtime_context: dict[str, object] = {}
+    output = SoVitsSvcEngine().convert(
+        input_vocals_path=str(files["input_path"]),
+        prompt_text="少年感、男声、清亮",
+        style_strength=0.7,
+        output_path=str(files["output_path"]),
+        debug_dir=str(tmp_path / "debug"),
+        style_preset={"model_preset_id": "final_male_youth"},
+        allow_preset_fallback=True,
+        runtime_context=runtime_context,
+    )
+
+    metadata = runtime_context["result_metadata"]
+    assert output == str(files["output_path"])
+    assert metadata["requested_model_preset_id"] == "final_male_youth"
+    assert metadata["effective_model_preset_id"] == "final_primary"
+    assert metadata["model_preset_id"] == "final_primary"
+    assert metadata["preset_fallback_used"] is True
+    assert "结果不代表该专用风格真实效果" in metadata["preset_fallback_reason"]
+    assert metadata["speaker"] == "final_spk"
 
 
 def test_sovits_real_mode_raises_output_not_found_when_results_have_no_new_file(mocker, tmp_path, monkeypatch):
@@ -493,6 +877,7 @@ def test_style_library_preset_overrides_default_env_config(tmp_path, monkeypatch
 
 
 def test_convert_route_defaults_to_sovits_and_passes_style_preset_id(mocker):
+    mocker.patch.object(synthesis_endpoint.svc_task_service, "use_celery", return_value=False)
     mocker.patch.object(synthesis_endpoint.svc_task_service, "get_upload", return_value=object())
     mocker.patch.object(synthesis_endpoint.svc_task_service, "create_task", return_value="task-1")
     background_tasks = BackgroundTasks()
@@ -503,6 +888,15 @@ def test_convert_route_defaults_to_sovits_and_passes_style_preset_id(mocker):
                 vocals_id="vocals-1",
                 prompt_text="清澈少年感",
                 style_preset_id="pop_bright",
+                model_preset_id="final_primary",
+                transpose=-2,
+                f0_method="rmvpe",
+                auto_predict_f0=False,
+                slice_db=-38.0,
+                clip_seconds=5.0,
+                pad_seconds=0.5,
+                allow_preset_fallback=True,
+                adapter_mode="no_adapter",
             ),
             background_tasks=background_tasks,
         )
@@ -510,8 +904,65 @@ def test_convert_route_defaults_to_sovits_and_passes_style_preset_id(mocker):
 
     assert result["engine"] == "sovits"
     assert result["task_id"] == "task-1"
+    assert result["task_backend_mode"] == "local"
     assert len(background_tasks.tasks) == 1
     assert background_tasks.tasks[0].kwargs["style_preset_id"] == "pop_bright"
+    assert background_tasks.tasks[0].kwargs["model_preset_id"] == "final_primary"
+    assert background_tasks.tasks[0].kwargs["transpose"] == -2
+    assert background_tasks.tasks[0].kwargs["f0_method"] == "rmvpe"
+    assert background_tasks.tasks[0].kwargs["slice_db"] == -38.0
+    assert background_tasks.tasks[0].kwargs["allow_preset_fallback"] is True
+    assert background_tasks.tasks[0].kwargs["requested_adapter_mode"] == "no_adapter"
+
+
+def test_convert_route_uses_celery_dispatch_when_enabled(mocker):
+    mocker.patch.object(synthesis_endpoint.svc_task_service, "use_celery", return_value=True)
+    mocker.patch.object(synthesis_endpoint.svc_task_service, "get_upload", return_value=object())
+    mocker.patch.object(synthesis_endpoint.svc_task_service, "create_task", return_value="task-celery")
+    apply_async_mock = mocker.patch("app.workers.svc_tasks.process_svc_task.apply_async")
+    background_tasks = BackgroundTasks()
+
+    result = asyncio.run(
+        synthesis_endpoint.convert_audio(
+            request=ConvertRequest(
+                vocals_id="vocals-1",
+                prompt_text="清澈少年感",
+                style_preset_id="pop_bright",
+                adapter_mode="rule_based_adapter",
+            ),
+            background_tasks=background_tasks,
+        )
+    )
+
+    assert result["task_backend_mode"] == "celery"
+    assert len(background_tasks.tasks) == 0
+    apply_async_mock.assert_called_once()
+    assert apply_async_mock.call_args.kwargs["kwargs"]["requested_adapter_mode"] == "rule_based_adapter"
+
+
+def test_celery_eager_mode_task_can_complete(mocker):
+    process_mock = mocker.patch.object(
+        svc_task_service,
+        "process_task",
+        return_value="/tmp/converted.wav",
+    )
+    mocker.patch.object(process_svc_task.backend, "mark_as_done", return_value=None)
+    result = process_svc_task.apply(
+        kwargs={
+            "task_id": "task-eager",
+            "prompt_text": "清亮、少年感",
+            "style_strength": 0.8,
+            "style_preset_id": "pop_bright",
+            "model_preset_id": "final_primary",
+            "transpose": -1,
+            "allow_preset_fallback": True,
+            "requested_adapter_mode": "no_adapter",
+        },
+    )
+    assert result.get() == "/tmp/converted.wav"
+    process_mock.assert_called_once()
+    assert process_mock.call_args.kwargs["allow_preset_fallback"] is True
+    assert process_mock.call_args.kwargs["requested_adapter_mode"] == "no_adapter"
 
 
 def test_prompt_text_is_passed_to_style_library_and_selected_style_written_to_debug(mocker, tmp_path, monkeypatch):
@@ -576,11 +1027,315 @@ def test_prompt_text_is_passed_to_style_library_and_selected_style_written_to_de
     assert debug_payload["reason"] == "命中关键词：明亮、流行；选择 pop_bright"
 
 
+def test_process_task_writes_style_embedding_adapter_and_audio_quality(mocker, tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setattr(svc_task_service_module, "RUNTIME_DEBUG_DIR", str(runtime_dir))
+    svc_task_service._uploads.clear()
+    svc_task_service._tasks.clear()
+
+    input_path = tmp_path / "input.wav"
+    vocals_path = tmp_path / "vocals.wav"
+    _write_wav(input_path)
+    _write_wav(vocals_path)
+
+    svc_task_service._uploads["vocals-embed"] = UploadRecord(
+        vocals_id="vocals-embed",
+        input_path=str(input_path),
+        vocals_path=str(vocals_path),
+        is_vocal_only=True,
+    )
+    svc_task_service._tasks["task-embed"] = TaskState(
+        task_id="task-embed",
+        status="queued",
+        message="任务已创建",
+        engine="sovits",
+        vocals_id="vocals-embed",
+        task_backend_mode="local",
+    )
+
+    mocker.patch(
+        "app.services.svc_task_service.style_library.retrieve_style",
+        return_value={
+            "style_id": "pop_bright",
+            "description": "流行、明亮、清澈、少年感",
+            "model_preset_id": "final_primary",
+            "model_display_name": "最终演示 So-VITS-SVC 模型",
+            "model_path": "model.pth",
+            "config_path": "config.json",
+            "speaker": "lain",
+            "transpose": 0,
+            "match_score": 88,
+            "matched_keywords": ["明亮", "流行"],
+            "reason": "命中关键词：明亮、流行；选择 pop_bright",
+            "source_repo": "SuCicada/Lain-so-vits-svc-4.1",
+            "license": "gpl",
+        },
+    )
+    mocker.patch(
+        "app.services.svc_task_service.text_style_encoder.encode_prompt",
+        return_value=TextStyleEmbedding(
+            embedding=(np.ones(384, dtype=np.float32) / np.sqrt(384.0)).astype(float).tolist(),
+            embedding_dim=384,
+            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            prompt_text="清亮、少年感、男声",
+            normalized_prompt="清亮、少年感、男声",
+            keywords=["清亮", "少年感", "男声"],
+        ),
+    )
+    mocker.patch(
+        "app.services.svc_task_service.text_style_adapter.build_controls",
+        return_value=TextStyleAdapterResult(
+            adapter_enabled=True,
+            adapter_mode="rule_based",
+            adapter_version="v1_rule_mlp_or_rule_based",
+            adapter_type="rule_based",
+            adapter_checkpoint_path="",
+            trainable=False,
+            control_params={
+                "model_preset_id": "final_primary",
+                "transpose": 0,
+                "brightness": 0.88,
+                "power": 0.55,
+                "breathiness": 0.41,
+                "youthfulness": 0.91,
+                "gender_hint": "male",
+                "style_strength": 0.7,
+            },
+            override_reason="rule-based adapter mapping",
+        ),
+    )
+    mocker.patch.object(
+        svc_task_service._engines["sovits"],
+        "convert",
+        side_effect=lambda **kwargs: shutil.copyfile(str(vocals_path), kwargs["output_path"]) or kwargs["output_path"],
+    )
+
+    svc_task_service.process_task(
+        "task-embed",
+        prompt_text="清亮、少年感、男声",
+        style_strength=0.7,
+        style_preset_id="pop_bright",
+    )
+
+    debug_dir = runtime_dir / "task-embed"
+    assert (debug_dir / "style_embedding.json").exists()
+    assert (debug_dir / "style_embedding.npy").exists()
+    assert (debug_dir / "style_adapter_output.json").exists()
+    assert (debug_dir / "audio_quality_report.json").exists()
+    task = svc_task_service.get_task("task-embed")
+    assert task is not None
+    assert task.engine_details["embedding_dim"] == 384
+    assert task.engine_details["adapter_mode"] == "rule_based"
+    assert task.engine_details["adapter_version"] == "v1_rule_mlp_or_rule_based"
+    assert task.engine_details["audio_quality_summary"]["duration_consistency"] >= 0.0
+
+
+def test_process_task_writes_conversion_params_json(mocker, tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setattr(svc_task_service_module, "RUNTIME_DEBUG_DIR", str(runtime_dir))
+    svc_task_service._uploads.clear()
+    svc_task_service._tasks.clear()
+
+    input_path = tmp_path / "input.wav"
+    vocals_path = tmp_path / "vocals.wav"
+    _write_wav(input_path)
+    _write_wav(vocals_path)
+
+    svc_task_service._uploads["vocals-conv"] = UploadRecord(
+        vocals_id="vocals-conv",
+        input_path=str(input_path),
+        vocals_path=str(vocals_path),
+        is_vocal_only=True,
+    )
+    svc_task_service._tasks["task-conv"] = TaskState(
+        task_id="task-conv",
+        status="queued",
+        message="任务已创建",
+        engine="sovits",
+        vocals_id="vocals-conv",
+        task_backend_mode="local",
+    )
+
+    mocker.patch(
+        "app.services.svc_task_service.style_library.retrieve_style",
+        return_value={
+            "style_id": "baseline_general",
+            "style_label": "基础通用风格",
+            "description": "通用流行 / 基础内容保持型 SVC",
+            "model_preset_id": "final_primary",
+            "model_display_name": "最终演示 So-VITS-SVC 模型",
+            "model_path": "model.pth",
+            "config_path": "config.json",
+            "speaker": "lain",
+            "transpose": 0,
+            "match_score": 10,
+            "matched_keywords": ["默认"],
+            "reason": "未命中明显关键词；使用默认候选 baseline_general",
+            "model_preset_ready": True,
+            "model_preset_configured": True,
+            "current_style_has_dedicated_model": False,
+        },
+    )
+    mocker.patch(
+        "app.services.svc_task_service.text_style_adapter.build_controls",
+        return_value=TextStyleAdapterResult(
+            adapter_enabled=True,
+            adapter_mode="trained",
+            adapter_version="v1",
+            adapter_type="trained_mlp",
+            adapter_checkpoint_path="checkpoint.pt",
+            trainable=True,
+            control_params={"model_preset_id": "final_primary", "transpose": -1, "style_strength": 0.7},
+            override_reason="trained adapter",
+        ),
+    )
+    mocker.patch.object(
+        svc_task_service._engines["sovits"],
+        "convert",
+        side_effect=lambda **kwargs: shutil.copyfile(str(vocals_path), kwargs["output_path"]) or kwargs["output_path"],
+    )
+
+    svc_task_service.process_task(
+        "task-conv",
+        prompt_text="默认",
+        style_strength=0.7,
+        f0_method="rmvpe",
+        auto_predict_f0=False,
+        slice_db=-36.0,
+        clip_seconds=4.0,
+        pad_seconds=0.75,
+    )
+
+    payload = json.loads((runtime_dir / "task-conv" / "conversion_params.json").read_text(encoding="utf-8"))
+    assert payload["f0_method"] in {"rmvpe", "system_default"}
+    assert payload["auto_predict_f0"] is False
+    assert payload["slice_db"] == -36.0
+    assert payload["clip_seconds"] == 4.0
+    assert payload["pad_seconds"] == 0.75
+    assert payload["conversion_params_path"].endswith("conversion_params.json")
+
+
+def test_process_task_requested_no_adapter_skips_adapter_controls_and_writes_task_config(mocker, tmp_path, monkeypatch):
+    runtime_dir = tmp_path / "runtime"
+    monkeypatch.setattr(svc_task_service_module, "RUNTIME_DEBUG_DIR", str(runtime_dir))
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0")
+    svc_task_service._uploads.clear()
+    svc_task_service._tasks.clear()
+
+    input_path = tmp_path / "input.wav"
+    vocals_path = tmp_path / "vocals.wav"
+    _write_wav(input_path)
+    _write_wav(vocals_path)
+
+    svc_task_service._uploads["vocals-no-adapter"] = UploadRecord(
+        vocals_id="vocals-no-adapter",
+        input_path=str(input_path),
+        vocals_path=str(vocals_path),
+        is_vocal_only=True,
+    )
+    svc_task_service._tasks["task-no-adapter"] = TaskState(
+        task_id="task-no-adapter",
+        status="queued",
+        message="任务已创建",
+        engine="sovits",
+        vocals_id="vocals-no-adapter",
+        task_backend_mode="celery",
+    )
+
+    mocker.patch(
+        "app.services.svc_task_service.style_library.retrieve_style",
+        return_value={
+            "style_id": "pop_bright",
+            "description": "流行、明亮、清澈、少年感",
+            "model_preset_id": "final_male_youth",
+            "model_display_name": "少年感男声目标模型",
+            "model_path": "model.pth",
+            "config_path": "config.json",
+            "speaker": "Nova_Adult",
+            "transpose": 1,
+            "match_score": 88,
+            "matched_keywords": ["清亮", "少年感"],
+            "reason": "命中关键词：清亮、少年感；选择 pop_bright",
+            "model_preset_ready": True,
+            "model_preset_configured": True,
+            "current_style_has_dedicated_model": True,
+        },
+    )
+    mocker.patch(
+        "app.services.svc_task_service.text_style_encoder.encode_prompt",
+        return_value=TextStyleEmbedding(
+            embedding=(np.ones(384, dtype=np.float32) / np.sqrt(384.0)).astype(float).tolist(),
+            embedding_dim=384,
+            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            prompt_text="清亮、少年感、男声",
+            normalized_prompt="清亮、少年感、男声",
+            keywords=["清亮", "少年感", "男声"],
+        ),
+    )
+    build_controls_mock = mocker.patch(
+        "app.services.svc_task_service.text_style_adapter.build_controls",
+        return_value=TextStyleAdapterResult(
+            adapter_enabled=False,
+            adapter_mode="no_adapter",
+            adapter_version="v1",
+            adapter_type="disabled",
+            adapter_checkpoint_path="checkpoint.pt",
+            trainable=False,
+            control_params={"model_preset_id": "final_male_youth", "transpose": 1, "style_strength": 0.65},
+            override_reason="requested_adapter_mode=no_adapter; skipped TextStyleAdapter control injection",
+        ),
+    )
+    apply_controls_mock = mocker.patch(
+        "app.services.svc_task_service.style_library.apply_adapter_controls",
+        side_effect=lambda preset, control_params, model_preset_id=None, override_reason=None: {
+            **dict(preset),
+            "model_preset_id": model_preset_id or dict(preset).get("model_preset_id"),
+            "adapter_control_params": dict(control_params or {}),
+            "adapter_override_reason": override_reason,
+        },
+    )
+    mocker.patch.object(
+        svc_task_service._engines["sovits"],
+        "convert",
+        side_effect=lambda **kwargs: shutil.copyfile(str(vocals_path), kwargs["output_path"]) or kwargs["output_path"],
+    )
+
+    svc_task_service.process_task(
+        "task-no-adapter",
+        prompt_text="清亮、少年感、男声",
+        style_strength=0.65,
+        model_preset_id="final_male_youth",
+        requested_adapter_mode="no_adapter",
+    )
+
+    build_controls_mock.assert_called_once()
+    assert build_controls_mock.call_args.kwargs["requested_adapter_mode"] == "no_adapter"
+    apply_controls_mock.assert_called_once()
+    assert apply_controls_mock.call_args.args[1] == {"model_preset_id": "final_male_youth"}
+    task = svc_task_service.get_task("task-no-adapter")
+    assert task is not None
+    assert task.engine_details["requested_adapter_mode"] == "no_adapter"
+    assert task.engine_details["effective_adapter_mode"] == "no_adapter"
+    assert task.engine_details["adapter_mode"] == "no_adapter"
+    debug_dir = runtime_dir / "task-no-adapter"
+    task_config = json.loads((debug_dir / "task_config.json").read_text(encoding="utf-8"))
+    assert task_config["requested_adapter_mode"] == "no_adapter"
+    assert task_config["effective_adapter_mode"] == "no_adapter"
+    assert task_config["worker_pid"] > 0
+    assert task_config["cuda_visible_devices"] == "0"
+    assert isinstance(task_config["torch_cuda_available"], bool)
+    assert task_config["output_path"].endswith("converted.wav")
+
+
 def test_upload_route_returns_vocals_id(mocker):
     mocker.patch.object(
         synthesis_endpoint.svc_task_service,
         "create_upload",
-        return_value=SimpleNamespace(vocals_id="vocals-123", is_vocal_only=True),
+        return_value=SimpleNamespace(
+            vocals_id="vocals-123",
+            is_vocal_only=True,
+            input_quality_summary={"quality_level": "warn", "warnings": ["音频较短"]},
+        ),
     )
 
     result = asyncio.run(
@@ -591,6 +1346,7 @@ def test_upload_route_returns_vocals_id(mocker):
     )
 
     assert result["vocals_id"] == "vocals-123"
+    assert result["input_quality_summary"]["quality_level"] == "warn"
 
 
 def test_system_health_returns_ok(mocker):
@@ -641,10 +1397,12 @@ def test_task_result_response_uses_ascii_safe_headers_and_filename(tmp_path):
             "return_code": 0,
             "elapsed_seconds": 34.297,
             "sovits_command_debug_path": "/runtime/debug/task-result/sovits_command.txt",
+            "gpu_telemetry_debug_path": "/runtime/debug/task-result/gpu_telemetry.txt",
         },
     )
 
     response = asyncio.run(synthesis_endpoint.get_task_result("task-result"))
+    task_payload = asyncio.run(synthesis_endpoint.get_task_status("task-result"))
 
     assert response.headers["x-task-id"] == "task-result"
     assert response.headers["x-inference-mode"] == "real"
@@ -653,6 +1411,7 @@ def test_task_result_response_uses_ascii_safe_headers_and_filename(tmp_path):
     assert response.headers["content-disposition"] == 'attachment; filename="converted_task-result.wav"'
     assert "x-svc-model-display-name" not in response.headers
     assert "x-svc-selected-output" not in response.headers
+    assert task_payload["gpu_telemetry_debug_path"] == "/runtime/debug/task-result/gpu_telemetry.txt"
     for header_value in response.headers.values():
         header_value.encode("latin-1")
 

@@ -2,6 +2,7 @@
 import os
 import logging
 import json
+from typing import Literal
 # Must import multiprocess and set start method before torch or any cuda stuff is initialized
 import multiprocessing as mp
 try:
@@ -11,7 +12,7 @@ except RuntimeError:
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form, BackgroundTasks, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import shutil
 from app.models_svc.stylesinger_wrapper import STYLE_FEATURE_HARD_GATE, stylesinger_service
 from app.services.system_status import collect_app_health, collect_sovits_check
@@ -31,9 +32,17 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 class ConvertRequest(BaseModel):
     vocals_id: str
     prompt_text: str
-    style_strength: float = 0.6
+    style_strength: float = Field(default=0.6, ge=0.0, le=1.0)
     style_preset_id: str | None = None
     model_preset_id: str | None = None
+    transpose: int = Field(default=0, ge=-24, le=24)
+    f0_method: str | None = None
+    auto_predict_f0: bool = False
+    slice_db: float | None = Field(default=None, ge=-80.0, le=0.0)
+    clip_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
+    pad_seconds: float | None = Field(default=None, ge=0.0, le=5.0)
+    allow_preset_fallback: bool = False
+    adapter_mode: Literal["trained_adapter", "rule_based_adapter", "no_adapter"] | None = None
     engine: str = "sovits"
 
 
@@ -47,6 +56,47 @@ def _save_upload_file(upload: UploadFile, task_id: str, prefix: str = "input") -
 
 def _task_output_path(task_id: str) -> str:
     return os.path.join(OUTPUT_DIR, f"{task_id}_out.wav")
+
+
+def _dispatch_svc_convert(
+    background_tasks: BackgroundTasks,
+    task_id: str,
+    prompt_text: str,
+    style_strength: float,
+    style_preset_id: str | None = None,
+    model_preset_id: str | None = None,
+    transpose: int | None = None,
+    f0_method: str | None = None,
+    auto_predict_f0: bool | None = None,
+    slice_db: float | None = None,
+    clip_seconds: float | None = None,
+    pad_seconds: float | None = None,
+    allow_preset_fallback: bool = False,
+    adapter_mode: str | None = None,
+) -> None:
+    kwargs = {
+        "task_id": task_id,
+        "prompt_text": prompt_text,
+        "style_strength": style_strength,
+        "style_preset_id": style_preset_id,
+        "model_preset_id": model_preset_id,
+        "transpose": transpose,
+        "f0_method": f0_method,
+        "auto_predict_f0": auto_predict_f0,
+        "slice_db": slice_db,
+        "clip_seconds": clip_seconds,
+        "pad_seconds": pad_seconds,
+        "allow_preset_fallback": allow_preset_fallback,
+        "requested_adapter_mode": adapter_mode,
+    }
+    if svc_task_service.use_celery():
+        try:  # pragma: no cover - import path differs between app runtime and celery CLI
+            from app.workers.svc_tasks import process_svc_task
+        except ModuleNotFoundError:  # pragma: no cover
+            from backend.app.workers.svc_tasks import process_svc_task
+        process_svc_task.apply_async(kwargs=kwargs, queue="svc")
+        return
+    background_tasks.add_task(svc_task_service.process_task, **kwargs)
 
 
 def _ascii_header_value(value: object) -> str:
@@ -156,17 +206,31 @@ def _normalize_svc_task_payload(task_id: str, task) -> dict:
         "inference_mode": task.inference_mode,
         "engine_details": task.engine_details,
         "result_metadata": result_metadata,
+        "task_backend_mode": getattr(task, "task_backend_mode", result_metadata.get("task_backend_mode", "local")),
+        "text_encoding": getattr(task, "text_encoding", None),
+        "adapter_result": getattr(task, "adapter_result", None),
+        "audio_quality": getattr(task, "audio_quality", None),
         "mock_enabled": result_metadata.get("mock_enabled"),
         "model_path": result_metadata.get("model_path"),
         "config_path": result_metadata.get("config_path"),
         "speaker": result_metadata.get("speaker"),
         "model_preset_id": result_metadata.get("model_preset_id"),
+        "requested_model_preset_id": result_metadata.get("requested_model_preset_id"),
+        "effective_model_preset_id": result_metadata.get("effective_model_preset_id"),
+        "preset_fallback_used": result_metadata.get("preset_fallback_used"),
+        "preset_fallback_reason": result_metadata.get("preset_fallback_reason"),
         "model_display_name": result_metadata.get("model_display_name"),
         "source_repo": result_metadata.get("source_repo"),
+        "source_url": result_metadata.get("source_url"),
         "license": result_metadata.get("license"),
+        "install_report_path": result_metadata.get("install_report_path"),
+        "notes": result_metadata.get("notes"),
         "model_path_basename": result_metadata.get("model_path_basename"),
         "config_path_basename": result_metadata.get("config_path_basename"),
+        "model_preset_ready": result_metadata.get("model_preset_ready"),
+        "model_preset_configured": result_metadata.get("model_preset_configured"),
         "is_demo_quality": result_metadata.get("is_demo_quality"),
+        "smoke_test_passed": result_metadata.get("smoke_test_passed"),
         "is_technical_validation_only": result_metadata.get("is_technical_validation_only"),
         "device": result_metadata.get("device"),
         "selected_output": result_metadata.get("selected_output"),
@@ -174,6 +238,30 @@ def _normalize_svc_task_payload(task_id: str, task) -> dict:
         "return_code": result_metadata.get("return_code"),
         "elapsed_seconds": result_metadata.get("elapsed_seconds"),
         "sovits_command_debug_path": result_metadata.get("sovits_command_debug_path"),
+        "gpu_telemetry_debug_path": result_metadata.get("gpu_telemetry_debug_path"),
+        "encoder_model_name": result_metadata.get("encoder_model_name"),
+        "embedding_dim": result_metadata.get("embedding_dim"),
+        "embedding_norm": result_metadata.get("embedding_norm"),
+        "top_keywords": result_metadata.get("top_keywords"),
+        "text_encoding_status": result_metadata.get("text_encoding_status"),
+        "text_encoding_enabled": result_metadata.get("text_encoding_enabled"),
+        "adapter_enabled": result_metadata.get("adapter_enabled"),
+        "adapter_version": result_metadata.get("adapter_version"),
+        "adapter_type": result_metadata.get("adapter_type"),
+        "control_params_summary": result_metadata.get("control_params_summary"),
+        "adapter_override_reason": result_metadata.get("adapter_override_reason"),
+        "adapter_fallback_reason": result_metadata.get("adapter_fallback_reason"),
+        "audio_quality_summary": result_metadata.get("audio_quality_summary"),
+        "audio_quality_report_path": result_metadata.get("audio_quality_report_path"),
+        "text_style_adapter_notice": result_metadata.get("text_style_adapter_notice"),
+        "f0_method": result_metadata.get("f0_method"),
+        "f0_fallback_reason": result_metadata.get("f0_fallback_reason"),
+        "auto_predict_f0": result_metadata.get("auto_predict_f0"),
+        "slice_db": result_metadata.get("slice_db"),
+        "clip_seconds": result_metadata.get("clip_seconds"),
+        "pad_seconds": result_metadata.get("pad_seconds"),
+        "conversion_params_path": result_metadata.get("conversion_params_path"),
+        "conversion_params_summary": result_metadata.get("conversion_params_summary"),
         "reasons": getattr(task, "reasons", []),
         "legacy_status": "completed" if task.status == "succeeded" else task.status,
     }
@@ -266,6 +354,7 @@ async def upload_audio(
             "vocals_id": upload_record.vocals_id,
             "status": "ready",
             "is_vocal_only": upload_record.is_vocal_only,
+            "input_quality_summary": upload_record.input_quality_summary,
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"上传音频失败: {exc}") from exc
@@ -280,19 +369,33 @@ async def convert_audio(
     if upload is None:
         raise HTTPException(status_code=404, detail="vocals_id not found")
 
-    task_id = svc_task_service.create_task(request.vocals_id, engine=request.engine or "sovits")
-    background_tasks.add_task(
-        svc_task_service.process_task,
+    task_backend_mode = "celery" if svc_task_service.use_celery() else "local"
+    task_id = svc_task_service.create_task(
+        request.vocals_id,
+        engine=request.engine or "sovits",
+        task_backend_mode=task_backend_mode,
+    )
+    _dispatch_svc_convert(
+        background_tasks=background_tasks,
         task_id=task_id,
         prompt_text=request.prompt_text,
         style_strength=request.style_strength,
         style_preset_id=request.style_preset_id,
         model_preset_id=request.model_preset_id,
+        transpose=request.transpose,
+        f0_method=request.f0_method,
+        auto_predict_f0=request.auto_predict_f0,
+        slice_db=request.slice_db,
+        clip_seconds=request.clip_seconds,
+        pad_seconds=request.pad_seconds,
+        allow_preset_fallback=request.allow_preset_fallback,
+        adapter_mode=request.adapter_mode,
     )
     return {
         "task_id": task_id,
         "status": "queued",
         "engine": request.engine or "sovits",
+        "task_backend_mode": task_backend_mode,
     }
 
 
