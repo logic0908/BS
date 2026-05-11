@@ -1,5 +1,7 @@
 # Requirement Alignment Audit
 
+> 注：本审计记录保留了早期需求措辞，其中 “Vue 3 或 React” 属于源需求候选技术栈描述；当前仓库维护中的真实主前端已经收敛为 **React + Vite + TypeScript**，主入口为 `frontend/src/main.tsx` 与 `frontend/src/App.tsx`。
+
 生成日期：2026-05-06
 
 依据文件：`/home/featurize/work/BS/内容.doc`
@@ -8,7 +10,7 @@
 
 - 系统题目：基于文本提示词控制的歌声风格转换系统。
 - 研究内容：浏览器访问，上传清唱/人声音频，输入自然语言风格描述，输出符合描述的转换歌声，可试听和下载；不追求从零生成新歌曲，专注已有干声/人声的高质量、可控音色与风格转换，研究重心是“文本到声音风格”的映射控制。
-- 前端要求：Vue 3 或 React、WaveSurfer.js、Axios、上传区、提示词输入区、风格标签、风格强度滑块、开始转换按钮、结果波形、播放/暂停、下载、A/B 对比。
+- 前端要求：源需求允许 Vue 3 或 React；当前实现采用 React + Vite，并保留 WaveSurfer.js、Axios、上传区、提示词输入区、风格标签、风格强度滑块、开始转换按钮、结果波形、播放/暂停、下载、A/B 对比。
 - 后端要求：FastAPI、Celery + Redis、Demucs 或 UVR 人声分离、So-VITS-SVC 或 DiffSVC 且优先 So-VITS-SVC、Sentence-BERT/BERT 文本编码、Adapter 风格控制、GPU 推理。
 - 核心创新要求：文本提示词编码为固定维度风格向量；Adapter 接收风格向量并输出 Bias/Scale；Bias/Scale 调制 So-VITS-SVC 中间层特征；训练时冻结 So-VITS-SVC 大部分权重，只训练 Adapter；准备 `{干声音频, 风格描述文本}` 小规模配对数据集；产出训练好的“文本提示词-歌声风格”适配器模型；论文包含系统设计、模型训练细节、主观评测结果。
 - 部署要求：Docker 是推荐部署产出；Featurize 当前实际演示可继续使用本机 base 环境，但 README 必须区分“当前运行方式”和“后续 Docker 化”。

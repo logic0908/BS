@@ -1,13 +1,29 @@
+# Local agent / IDE state
+.agents/
+.claude/
+.codex
+.codex/
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
 .Python
+.venv/
+venv/
 env/
+ENV/
 build/
-develop-eggs/
 dist/
+develop-eggs/
 downloads/
 eggs/
 .eggs/
@@ -21,82 +37,62 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
-venv/
-.env
-env/
-__pycache__/
-node_modules/
-.cache/
-# Data & Models (不要上传大文件)
-backend/data/*
-!backend/data/.gitkeep
-*.pth
-*.pt
-*.onnx
-*.wav
-*.mp3
-*.flac
-
-# IDE
-.idea/
-.vscode/
-*.swp
-
-# large model/data
-StyleSinger/data/
-StyleSinger/checkpoints/
-StyleSinger/infer_out/
-
-# model weights
-*.pth
-*.pt
-*.ckpt
-
-# audio outputs
-*.wav
-*.mp3
-
-# cache
-__pycache__/
-.ipynb_checkpoints/
-.codex
-
-# frontend/backend temp
-node_modules/
-
-# archives
-*.zip
-*.doc
-# ==== Local model assets / third-party repos ====
-local_models/
-so-vits-svc/
-
-# ==== Runtime outputs / debug artifacts ====
-runtime/
-demo/
-*.wav
-*.flac
-*.mp3
-
-# ==== Python cache / test cache ====
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# ==== Frontend build/cache ====
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-
-# ==== Environment / secrets ====
+# Environment files
 .env
 .env.*
 !.env.example
 
-# ==== OS / editor ====
-.DS_Store
-.vscode/
-.idea/
+# Node / frontend cache
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.cache/
+
+# Runtime outputs and debug evidence
+runtime/
+outputs/
+uploads/
+vocals/
+debug/
+demo/
+evaluation/
+
+# Local datasets and generated training assets
+data/**
+!data/**/
+!data/**/.gitkeep
+!data/**/README.md
+backend/data/**
+!backend/data/.gitkeep
+
+# Third-party local dependency checkout and model assets
+local_models/
+so-vits-svc/
+StyleSinger/data/
+StyleSinger/checkpoints/
+StyleSinger/infer_out/
+checkpoints/
+datasets/
+
+# Model weights / artifacts
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.safetensors
+
+# Generated audio artifacts
+*.wav
+*.mp3
+*.flac
+!backend/tests/fixtures/*.wav
+!backend/tests/fixtures/*.mp3
+!backend/tests/fixtures/*.flac
+
+# Archives / office artifacts often generated during thesis work
+*.zip
+*.doc
+*.docx
+*.ppt
+*.pptx
