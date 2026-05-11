@@ -31,7 +31,8 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 class ConvertRequest(BaseModel):
     vocals_id: str
-    prompt_text: str
+    prompt_text: str = ""
+    style_prompt: str | None = None
     style_strength: float = Field(default=0.6, ge=0.0, le=1.0)
     style_preset_id: str | None = None
     model_preset_id: str | None = None
@@ -63,6 +64,7 @@ def _dispatch_svc_convert(
     task_id: str,
     prompt_text: str,
     style_strength: float,
+    style_prompt: str | None = None,
     style_preset_id: str | None = None,
     model_preset_id: str | None = None,
     transpose: int | None = None,
@@ -77,6 +79,7 @@ def _dispatch_svc_convert(
     kwargs = {
         "task_id": task_id,
         "prompt_text": prompt_text,
+        "style_prompt": style_prompt,
         "style_strength": style_strength,
         "style_preset_id": style_preset_id,
         "model_preset_id": model_preset_id,
@@ -379,10 +382,14 @@ async def convert_audio(
         engine=request.engine or "sovits",
         task_backend_mode=task_backend_mode,
     )
+    effective_prompt = (request.prompt_text or request.style_prompt or "").strip()
+    if not effective_prompt:
+        raise HTTPException(status_code=422, detail="prompt_text or style_prompt is required")
     _dispatch_svc_convert(
         background_tasks=background_tasks,
         task_id=task_id,
-        prompt_text=request.prompt_text,
+        prompt_text=effective_prompt,
+        style_prompt=request.style_prompt or effective_prompt,
         style_strength=request.style_strength,
         style_preset_id=request.style_preset_id,
         model_preset_id=request.model_preset_id,

@@ -175,11 +175,21 @@ export interface ResultMetadata {
   gpu_telemetry_debug_path?: string | null
   task_backend_mode?: string | null
   encoder_model_name?: string | null
+  encoder_type?: string | null
   embedding_dim?: number | null
   embedding_norm?: number | null
   top_keywords?: string[] | null
   text_encoding_status?: string | null
   text_encoding_enabled?: boolean | null
+  condition_mode?: string | null
+  style_prompt?: string | null
+  style_emb_path?: string | null
+  style_emb_format?: string | null
+  film_strength?: number | null
+  film_target?: string | null
+  executed_internal_film?: boolean | null
+  called_conditioned_inference?: boolean | null
+  conditioning_report_path?: string | null
   adapter_enabled?: boolean | null
   adapter_mode?: string | null
   adapter_version?: string | null
@@ -242,11 +252,21 @@ export interface TaskResponse {
   sovits_command_debug_path?: string | null
   gpu_telemetry_debug_path?: string | null
   encoder_model_name?: string | null
+  encoder_type?: string | null
   embedding_dim?: number | null
   embedding_norm?: number | null
   top_keywords?: string[] | null
   text_encoding_status?: string | null
   text_encoding_enabled?: boolean | null
+  condition_mode?: string | null
+  style_prompt?: string | null
+  style_emb_path?: string | null
+  style_emb_format?: string | null
+  film_strength?: number | null
+  film_target?: string | null
+  executed_internal_film?: boolean | null
+  called_conditioned_inference?: boolean | null
+  conditioning_report_path?: string | null
   adapter_enabled?: boolean | null
   adapter_mode?: string | null
   adapter_version?: string | null

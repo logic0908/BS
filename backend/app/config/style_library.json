@@ -1,30 +1,56 @@
 [
   {
-    "style_id": "male_youth_thick",
-    "description": "少年感、男声、厚重",
-    "keywords": ["少年感", "少年", "男声", "厚重", "低沉", "powerful", "thick", "deep", "male"],
-    "model_preset_id": "final_primary",
+    "style_id": "male_youth",
+    "style_label": "少年感男声",
+    "description": "少年感、男声、清亮、轻快",
+    "keywords": ["少年感", "少年", "男声", "青春", "清亮", "阳光", "youth", "young", "male"],
+    "model_preset_id": "final_male_youth",
+    "style_tags": ["male", "youth", "bright"],
     "transpose": 0
   },
   {
-    "style_id": "female_pop_bright",
-    "description": "清亮、女声、流行",
-    "keywords": ["清亮", "清澈", "明亮", "女声", "流行", "female", "pop", "bright"],
-    "model_preset_id": "final_primary",
+    "style_id": "male_powerful",
+    "style_label": "力量感男声",
+    "description": "厚重、力量感、成熟男声",
+    "keywords": ["厚重", "低沉", "成熟", "力量", "摇滚", "爆发", "powerful", "thick", "deep", "male"],
+    "model_preset_id": "final_male_powerful",
+    "style_tags": ["male", "powerful", "thick"],
     "transpose": 0
   },
   {
-    "style_id": "lyrical_soft",
-    "description": "抒情、温柔、细腻、治愈",
-    "keywords": ["抒情", "温柔", "细腻", "治愈", "soft", "ballad"],
+    "style_id": "female_soft",
+    "style_label": "温柔女声",
+    "description": "温柔、气声、抒情、细腻女声",
+    "keywords": ["温柔", "气声", "抒情", "细腻", "治愈", "soft", "ballad", "airy", "female"],
+    "model_preset_id": "final_female_soft",
+    "style_tags": ["female", "soft", "breathy"],
+    "transpose": 0
+  },
+  {
+    "style_id": "female_clear",
+    "style_label": "清亮女声",
+    "description": "清亮、清澈、通透女声",
+    "keywords": ["清亮", "清澈", "明亮", "通透", "女声", "female", "pop", "bright", "clear"],
+    "model_preset_id": "final_female_clear",
+    "style_tags": ["female", "clear", "bright"],
+    "transpose": 0
+  },
+  {
+    "style_id": "baseline_general",
+    "style_label": "基础通用风格",
+    "description": "通用流行 / 基础内容保持型 SVC",
+    "keywords": ["自然", "通用", "基础", "默认", "generic", "baseline"],
     "model_preset_id": "final_primary",
+    "style_tags": ["baseline", "general"],
     "transpose": 0
   },
   {
     "style_id": "tech_villager_validation",
+    "style_label": "技术验收模型",
     "description": "技术验收 / 测试推理专用 Minecraft Villager",
     "keywords": ["测试推理", "技术验收", "tech_villager", "villager", "minecraft"],
     "model_preset_id": "tech_villager",
+    "style_tags": ["technical", "validation"],
     "transpose": 0
   }
 ]

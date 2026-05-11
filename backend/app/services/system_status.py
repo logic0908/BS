@@ -13,6 +13,7 @@ from typing import Any
 from app.models_svc.sovits_assets import inspect_sovits_assets
 from app.models_svc.sovits_wrapper import SoVitsSvcEngine
 from app.services.svc_model_presets import collect_presets_status
+from app.services.svc_task_service import svc_task_service
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 FRONTEND_DIST_DIR = PROJECT_ROOT / "frontend" / "dist"
@@ -123,6 +124,7 @@ def collect_app_health() -> dict[str, Any]:
         "python_version": sys.version,
         "conda_env": os.environ.get("CONDA_DEFAULT_ENV", ""),
         "mock_mode": runtime_config.mock_enabled,
+        "task_backend_mode": "celery" if svc_task_service.use_celery() else "local",
         "svc_model_presets": collect_presets_status(),
         "frontend_build_info": _frontend_build_info(),
         "timestamp": _iso_timestamp(),
@@ -162,7 +164,10 @@ def collect_sovits_check() -> dict[str, Any]:
         "model_preset_id": runtime_config.model_preset_id,
         "model_display_name": runtime_config.model_display_name,
         "source_repo": runtime_config.source_repo,
+        "source_url": runtime_config.source_url,
         "license": runtime_config.license,
+        "install_report_path": runtime_config.install_report_path,
+        "notes": runtime_config.notes,
         "model_path_basename": runtime_config.model_path_basename,
         "config_path_basename": runtime_config.config_path_basename,
         "is_demo_quality": runtime_config.is_demo_quality,
@@ -173,6 +178,12 @@ def collect_sovits_check() -> dict[str, Any]:
         "config_speech_encoder": asset_report["config_summary"]["speech_encoder"],
         "SOVITS_SPEAKER_exists_in_config": asset_report["speaker_exists_in_config"],
         "SOVITS_DEVICE": runtime_config.device,
+        "f0_method": runtime_config.f0_method,
+        "f0_fallback_reason": runtime_config.f0_fallback_reason,
+        "auto_predict_f0": runtime_config.auto_predict_f0,
+        "slice_db": runtime_config.slice_db,
+        "clip_seconds": runtime_config.clip_seconds,
+        "pad_seconds": runtime_config.pad_seconds,
         "SOVITS_PYTHON": runtime_config.python_bin,
         "CUDA_VISIBLE_DEVICES": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
         "contentvec_required": asset_report["contentvec_required"],

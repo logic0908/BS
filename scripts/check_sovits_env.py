@@ -18,6 +18,7 @@ if str(BACKEND_ROOT) not in sys.path:
 
 from app.models_svc.sovits_assets import inspect_sovits_assets  # noqa: E402
 from app.models_svc.sovits_wrapper import SoVitsSvcEngine, SoVitsSvcError  # noqa: E402
+from app.services.svc_smoke_validation import resolve_task_debug_dir  # noqa: E402
 
 IMPORT_TARGETS = [
     "numpy",
@@ -40,6 +41,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt-text", default="测试 So-VITS-SVC 真实推理", help="Prompt text for debug context.")
     parser.add_argument("--style-strength", type=float, default=0.65, help="Style strength for debug context.")
     parser.add_argument("--style-preset-id", default="", help="Optional style preset id to document in output.")
+    parser.add_argument("--task-id", default="", help="Optional synthetic task id used for debug output naming.")
+    parser.add_argument(
+        "--allow-unconfigured-preset-smoke",
+        action="store_true",
+        help="Allow validation-only smoke inference for an unconfigured preset without affecting normal API strict mode.",
+    )
     parser.add_argument("--run", action="store_true", help="Actually run model inference after checks pass.")
     return parser
 
@@ -160,12 +167,17 @@ def main() -> int:
 
     input_path = Path(args.input).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
-    debug_dir = PROJECT_ROOT / "runtime" / "debug" / "check_sovits_env"
+    requested_preset_id = (args.style_preset_id or os.environ.get("SVC_MODEL_PRESET_ID", "")).strip()
+    debug_dir = resolve_task_debug_dir(PROJECT_ROOT, args.task_id.strip() or None)
     debug_dir.mkdir(parents=True, exist_ok=True)
 
     python_bin = os.getenv("SOVITS_PYTHON") or sys.executable
     engine = SoVitsSvcEngine()
-    runtime_config = engine.resolve_runtime_config({})
+    style_preset = {"model_preset_id": requested_preset_id} if requested_preset_id else {}
+    runtime_config = engine.resolve_runtime_config(
+        style_preset,
+        allow_unconfigured_preset_smoke=args.allow_unconfigured_preset_smoke,
+    )
     asset_report = inspect_sovits_assets(
         repo_dir=runtime_config.repo_dir,
         infer_script=runtime_config.infer_script,
@@ -263,9 +275,13 @@ def main() -> int:
         "transpose": runtime_config.transpose,
         "timeout_seconds": runtime_config.timeout_seconds,
         "mock_enabled": runtime_config.mock_enabled,
+        "validation_mode": runtime_config.validation_mode or None,
+        "bypass_configured_gate": runtime_config.bypass_configured_gate,
+        "requested_model_preset_id": runtime_config.requested_model_preset_id or None,
+        "model_preset_id": runtime_config.model_preset_id or None,
         "cuda": torch_info,
         "final_command": command,
-        "style_preset_id": args.style_preset_id or None,
+        "style_preset_id": requested_preset_id or None,
     }
 
     print(json.dumps(report, ensure_ascii=False, indent=2))
@@ -284,7 +300,9 @@ def main() -> int:
             style_strength=args.style_strength,
             output_path=str(output_path),
             debug_dir=str(debug_dir),
-            style_preset={},
+            style_preset=style_preset,
+            task_id=args.task_id.strip() or None,
+            allow_unconfigured_preset_smoke=args.allow_unconfigured_preset_smoke,
         )
     except SoVitsSvcError as exc:
         print(json.dumps(exc.to_dict(), ensure_ascii=False, indent=2), file=sys.stderr)

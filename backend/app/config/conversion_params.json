@@ -1,0 +1,40 @@
+{
+  "defaults": {
+    "f0_method": "rmvpe",
+    "fallback_f0_method": "system_default",
+    "auto_predict_f0": false,
+    "transpose": 0,
+    "slice_db": -40.0,
+    "clip_seconds": 0.0,
+    "pad_seconds": 0.5
+  },
+  "limits": {
+    "transpose": {
+      "min": -24,
+      "max": 24
+    },
+    "slice_db": {
+      "min": -80.0,
+      "max": 0.0
+    },
+    "clip_seconds": {
+      "min": 0.0,
+      "max": 30.0
+    },
+    "pad_seconds": {
+      "min": 0.0,
+      "max": 5.0
+    }
+  },
+  "cli_passthrough": {
+    "transpose": true,
+    "f0_method": false,
+    "auto_predict_f0": false,
+    "slice_db": false,
+    "clip_seconds": false,
+    "pad_seconds": false
+  },
+  "notes": {
+    "unsupported_passthrough": "当前 So-VITS-SVC 4.1 集成只直接透传 transpose；其余参数先记录为系统实验参数，并在 debug/文档中说明未透传到 CLI。"
+  }
+}

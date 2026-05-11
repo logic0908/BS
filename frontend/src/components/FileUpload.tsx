@@ -32,7 +32,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFileSelect, disabled = false 
     if (file.type.startsWith('audio/') || file.name.endsWith('.wav') || file.name.endsWith('.mp3')) {
       onFileSelect(file)
     } else {
-      alert('Please upload a valid audio file (.mp3, .wav)')
+      alert('请上传有效的音频文件（.mp3 或 .wav）。')
     }
   }
 

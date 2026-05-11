@@ -166,6 +166,7 @@ class SvcTaskService:
         task_id: str,
         prompt_text: str,
         style_strength: float,
+        style_prompt: str | None = None,
         style_preset_id: str | None = None,
         model_preset_id: str | None = None,
         transpose: int | None = None,
@@ -190,9 +191,11 @@ class SvcTaskService:
         runtime_context: dict[str, Any] = {}
         selected_style: dict[str, Any] | None = None
         text_encoding_summary: dict[str, Any] | None = None
+        style_embedding_paths: dict[str, str] | None = None
         adapter_summary: dict[str, Any] | None = None
         audio_quality_summary: dict[str, Any] | None = None
         effective_style_strength = float(style_strength)
+        resolved_style_prompt = (style_prompt or prompt_text or "").strip()
         normalized_requested_adapter_mode = normalize_requested_adapter_mode(requested_adapter_mode)
         requested_adapter_mode_label = normalized_requested_adapter_mode or "auto"
         effective_adapter_mode = "pending"
@@ -230,6 +233,8 @@ class SvcTaskService:
                     "engine": task.engine,
                     "vocals_id": task.vocals_id,
                     "prompt_text": prompt_text,
+                    "style_prompt": style_prompt,
+                    "effective_style_prompt": resolved_style_prompt,
                     "style_strength": style_strength,
                     "style_preset_id": style_preset_id,
                     "model_preset_id": model_preset_id,
@@ -256,7 +261,7 @@ class SvcTaskService:
             task.progress = 55
             task.message = "正在检索风格预设"
             selected_style = style_library.retrieve_style(
-                prompt_text,
+                resolved_style_prompt,
                 style_preset_id=style_preset_id,
                 model_preset_id=model_preset_id,
             )
@@ -270,9 +275,10 @@ class SvcTaskService:
             self._persist_task(task)
             embedding = None
             try:
-                embedding = text_style_encoder.encode_prompt(prompt_text)
-                text_style_encoder.write_debug_artifacts(debug_dir, embedding)
+                embedding = text_style_encoder.encode_prompt(resolved_style_prompt)
+                style_embedding_paths = text_style_encoder.write_debug_artifacts(debug_dir, embedding)
                 text_encoding_summary = embedding.to_summary()
+                text_encoding_summary.update(style_embedding_paths)
             except TextStyleEncoderError as exc:
                 text_encoding_summary = {
                     "enabled": False,
@@ -358,7 +364,7 @@ class SvcTaskService:
             self._write_json(debug_dir, "conversion_params.json", conversion_params_summary)
             output = engine.convert(
                 input_vocals_path=upload.vocals_path,
-                prompt_text=prompt_text,
+                prompt_text=resolved_style_prompt,
                 style_strength=effective_style_strength,
                 output_path=target_output,
                 debug_dir=debug_dir,
@@ -367,6 +373,9 @@ class SvcTaskService:
                 runtime_context=runtime_context,
                 conversion_params=conversion_params_request,
                 allow_preset_fallback=allow_preset_fallback,
+                style_prompt=resolved_style_prompt,
+                style_emb_path=(style_embedding_paths or {}).get("style_embedding_pt"),
+                style_dim=(text_encoding_summary or {}).get("embedding_dim"),
             )
             if not os.path.exists(output):
                 raise RuntimeError(f"converted output missing: {output}")
@@ -390,8 +399,13 @@ class SvcTaskService:
                     "embedding_dim": (text_encoding_summary or {}).get("embedding_dim"),
                     "embedding_norm": (text_encoding_summary or {}).get("embedding_norm"),
                     "top_keywords": (text_encoding_summary or {}).get("top_keywords", []),
+                    "style_prompt": resolved_style_prompt,
+                    "style_emb_path": (style_embedding_paths or {}).get("style_embedding_pt"),
+                    "style_embedding_json": (style_embedding_paths or {}).get("style_embedding_json"),
+                    "style_embedding_npy": (style_embedding_paths or {}).get("style_embedding_npy"),
                     "text_encoding_status": (text_encoding_summary or {}).get("status"),
                     "text_encoding_enabled": bool((text_encoding_summary or {}).get("enabled")),
+                    "encoder_type": (text_encoding_summary or {}).get("encoder_type"),
                     "adapter_enabled": bool((adapter_summary or {}).get("adapter_enabled")),
                     "adapter_mode": (adapter_summary or {}).get("adapter_mode"),
                     "adapter_version": (adapter_summary or {}).get("adapter_version"),
@@ -402,7 +416,7 @@ class SvcTaskService:
                     "adapter_fallback_reason": (adapter_summary or {}).get("adapter_fallback_reason"),
                     "audio_quality_summary": audio_quality_summary,
                     "audio_quality_report_path": audio_quality_report.get("report_path"),
-                    "text_style_adapter_notice": "当前 TextStyleAdapter v1 将提示词语义映射为模型 preset 与转换参数；后续可扩展为网络中间层条件注入。",
+                    "text_style_adapter_notice": "当前主链路默认启用 internal FiLM；TextStyleAdapter 仍负责提示词到 preset/参数的辅助映射，但真正的网络内 Bias/Scale 调制发生在 So-VITS-SVC 推理内部。",
                     "input_quality_summary": upload.input_quality_summary,
                     "input_quality_report_path": upload.input_quality_report_path,
                     "input_audio_path": upload.input_path,
@@ -472,8 +486,13 @@ class SvcTaskService:
                         "embedding_dim": text_encoding_summary.get("embedding_dim"),
                         "embedding_norm": text_encoding_summary.get("embedding_norm"),
                         "top_keywords": text_encoding_summary.get("top_keywords", []),
+                        "style_prompt": resolved_style_prompt,
+                        "style_emb_path": (style_embedding_paths or {}).get("style_embedding_pt"),
+                        "style_embedding_json": (style_embedding_paths or {}).get("style_embedding_json"),
+                        "style_embedding_npy": (style_embedding_paths or {}).get("style_embedding_npy"),
                         "text_encoding_status": text_encoding_summary.get("status"),
                         "text_encoding_enabled": bool(text_encoding_summary.get("enabled")),
+                        "encoder_type": text_encoding_summary.get("encoder_type"),
                     }
                 )
             if adapter_summary:

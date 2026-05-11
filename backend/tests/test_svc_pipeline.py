@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import soundfile as sf
+import torch
 from fastapi import BackgroundTasks, UploadFile
 
 from app.api.endpoints import synthesis as synthesis_endpoint
@@ -22,6 +23,11 @@ from app.services.svc_task_service import TaskState, UploadRecord, svc_task_serv
 from app.services.text_style_encoder import TextStyleEmbedding
 from app.workers.svc_tasks import process_svc_task
 from app.models_svc.stylesinger_wrapper import stylesinger_service
+
+
+@pytest.fixture(autouse=True)
+def _default_condition_mode(monkeypatch):
+    monkeypatch.setenv("SOVITS_CONDITION_MODE", "none")
 
 
 def _write_wav(path: Path) -> None:
@@ -277,6 +283,7 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
     _prepare_valid_sovits_assets(files, speaker="villager")
     monkeypatch.setenv("SVC_DISABLE_MODEL_PRESETS", "true")
     monkeypatch.setenv("SOVITS_MOCK", "false")
+    monkeypatch.setenv("SOVITS_CONDITION_MODE", "internal_film")
     monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))
     monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(files["script_path"]))
     monkeypatch.setenv("SOVITS_MODEL_PATH", str(files["model_path"]))
@@ -285,6 +292,8 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
     monkeypatch.setenv("SOVITS_DEVICE", "cuda")
 
     runtime_context: dict[str, object] = {}
+    style_emb_path = tmp_path / "style_embedding.pt"
+    torch.save({"style_emb": torch.ones(256, dtype=torch.float32)}, style_emb_path)
 
     def _fake_run(command, cwd, capture_output, text, timeout, env):
         if command[:1] == ["nvidia-smi"]:
@@ -300,6 +309,19 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
                     stdout="pid, process_name, used_memory [MiB]\n12345, python, 4096 MiB\n",
                     stderr="",
                 )
+        if "--conditioning-report-path" in command:
+            report_path = Path(command[command.index("--conditioning-report-path") + 1])
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "condition_mode": "internal_film",
+                        "executed_internal_film": True,
+                        "film_target": "pre_decoder",
+                        "film_strength": 0.1,
+                    }
+                ),
+                encoding="utf-8",
+            )
         result_path = files["repo_dir"] / "results" / "task_123_0key_villager_sovits_pm.flac"
         _write_flac(result_path)
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
@@ -318,6 +340,9 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
         debug_dir=str(tmp_path / "debug"),
         task_id="task-123",
         runtime_context=runtime_context,
+        style_prompt="明亮流行",
+        style_emb_path=str(style_emb_path),
+        style_dim=256,
     )
 
     assert output == str(files["output_path"])
@@ -344,6 +369,13 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
     assert "0" in command
     assert "-d" in command
     assert "cuda" in command
+    assert "--style-emb-path" in command
+    assert str(style_emb_path) in command
+    assert "--condition-mode" in command
+    assert "internal_film" in command
+    assert "--film-strength" in command
+    assert "--film-target" in command
+    assert "pre_decoder" in command
     command_log = json.loads((tmp_path / "debug" / "sovits_command.txt").read_text(encoding="utf-8"))
     assert command_log["original_input_path"] == str(files["input_path"])
     assert command_log["original_input_size"] > 1024
@@ -356,7 +388,11 @@ def test_sovits_real_mode_uses_41_cli_and_copies_input_to_raw(mocker, tmp_path, 
     assert command_log["SOVITS_DEVICE"] == "cuda"
     assert command_log["command_includes_d_cuda"] is True
     assert command_log["gpu_telemetry_debug_path"].endswith("gpu_telemetry.txt")
+    assert command_log["condition_mode"] == "internal_film"
+    assert command_log["style_emb_path"] == str(style_emb_path)
     assert runtime_context["result_metadata"]["gpu_telemetry_debug_path"].endswith("gpu_telemetry.txt")
+    assert runtime_context["result_metadata"]["executed_internal_film"] is True
+    assert runtime_context["result_metadata"]["called_conditioned_inference"] is True
     telemetry_text = (tmp_path / "debug" / "gpu_telemetry.txt").read_text(encoding="utf-8")
     assert "SOVITS_DEVICE=cuda" in telemetry_text
     assert "command_includes_d_cuda=true" in telemetry_text
@@ -388,6 +424,26 @@ def test_active_preset_is_used_before_legacy_sovits_env(tmp_path, monkeypatch):
     assert runtime_config.speaker == "final_spk"
     assert runtime_config.model_preset_id == "final_primary"
     assert runtime_config.source_repo == "owner/final"
+
+
+def test_sovits_build_command_omits_internal_film_args_when_condition_mode_none(tmp_path, monkeypatch):
+    files = _prepare_runtime_files(tmp_path)
+    _prepare_valid_sovits_assets(files, speaker="villager")
+    monkeypatch.setenv("SVC_DISABLE_MODEL_PRESETS", "true")
+    monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))
+    monkeypatch.setenv("SOVITS_INFER_SCRIPT", str(files["script_path"]))
+    monkeypatch.setenv("SOVITS_MODEL_PATH", str(files["model_path"]))
+    monkeypatch.setenv("SOVITS_CONFIG_PATH", str(files["config_path"]))
+    monkeypatch.setenv("SOVITS_SPEAKER", "villager")
+    monkeypatch.setenv("SOVITS_CONDITION_MODE", "none")
+
+    engine = SoVitsSvcEngine()
+    runtime_config = engine.resolve_runtime_config({})
+    command = engine._build_command(runtime_config, "task-none", style_emb_path="/tmp/style.pt")
+
+    assert "--style-emb-path" not in command
+    assert "--condition-mode" not in command
+    assert "--film-strength" not in command
 
 
 def test_explicit_model_preset_id_can_select_tech_fallback(tmp_path, monkeypatch):
@@ -887,6 +943,7 @@ def test_convert_route_defaults_to_sovits_and_passes_style_preset_id(mocker):
             request=ConvertRequest(
                 vocals_id="vocals-1",
                 prompt_text="清澈少年感",
+                style_prompt="清澈少年感",
                 style_preset_id="pop_bright",
                 model_preset_id="final_primary",
                 transpose=-2,
@@ -912,6 +969,7 @@ def test_convert_route_defaults_to_sovits_and_passes_style_preset_id(mocker):
     assert background_tasks.tasks[0].kwargs["f0_method"] == "rmvpe"
     assert background_tasks.tasks[0].kwargs["slice_db"] == -38.0
     assert background_tasks.tasks[0].kwargs["allow_preset_fallback"] is True
+    assert background_tasks.tasks[0].kwargs["style_prompt"] == "清澈少年感"
     assert background_tasks.tasks[0].kwargs["requested_adapter_mode"] == "no_adapter"
 
 
@@ -927,6 +985,7 @@ def test_convert_route_uses_celery_dispatch_when_enabled(mocker):
             request=ConvertRequest(
                 vocals_id="vocals-1",
                 prompt_text="清澈少年感",
+                style_prompt="清澈少年感",
                 style_preset_id="pop_bright",
                 adapter_mode="rule_based_adapter",
             ),
@@ -937,6 +996,7 @@ def test_convert_route_uses_celery_dispatch_when_enabled(mocker):
     assert result["task_backend_mode"] == "celery"
     assert len(background_tasks.tasks) == 0
     apply_async_mock.assert_called_once()
+    assert apply_async_mock.call_args.kwargs["kwargs"]["style_prompt"] == "清澈少年感"
     assert apply_async_mock.call_args.kwargs["kwargs"]["requested_adapter_mode"] == "rule_based_adapter"
 
 
@@ -951,6 +1011,7 @@ def test_celery_eager_mode_task_can_complete(mocker):
         kwargs={
             "task_id": "task-eager",
             "prompt_text": "清亮、少年感",
+            "style_prompt": "清亮、少年感",
             "style_strength": 0.8,
             "style_preset_id": "pop_bright",
             "model_preset_id": "final_primary",
@@ -962,6 +1023,7 @@ def test_celery_eager_mode_task_can_complete(mocker):
     assert result.get() == "/tmp/converted.wav"
     process_mock.assert_called_once()
     assert process_mock.call_args.kwargs["allow_preset_fallback"] is True
+    assert process_mock.call_args.kwargs["style_prompt"] == "清亮、少年感"
     assert process_mock.call_args.kwargs["requested_adapter_mode"] == "no_adapter"
 
 
@@ -1074,8 +1136,8 @@ def test_process_task_writes_style_embedding_adapter_and_audio_quality(mocker, t
     mocker.patch(
         "app.services.svc_task_service.text_style_encoder.encode_prompt",
         return_value=TextStyleEmbedding(
-            embedding=(np.ones(384, dtype=np.float32) / np.sqrt(384.0)).astype(float).tolist(),
-            embedding_dim=384,
+            embedding=(np.ones(256, dtype=np.float32) / np.sqrt(256.0)).astype(float).tolist(),
+            embedding_dim=256,
             model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             prompt_text="清亮、少年感、男声",
             normalized_prompt="清亮、少年感、男声",
@@ -1104,7 +1166,7 @@ def test_process_task_writes_style_embedding_adapter_and_audio_quality(mocker, t
             override_reason="rule-based adapter mapping",
         ),
     )
-    mocker.patch.object(
+    convert_mock = mocker.patch.object(
         svc_task_service._engines["sovits"],
         "convert",
         side_effect=lambda **kwargs: shutil.copyfile(str(vocals_path), kwargs["output_path"]) or kwargs["output_path"],
@@ -1120,14 +1182,17 @@ def test_process_task_writes_style_embedding_adapter_and_audio_quality(mocker, t
     debug_dir = runtime_dir / "task-embed"
     assert (debug_dir / "style_embedding.json").exists()
     assert (debug_dir / "style_embedding.npy").exists()
+    assert (debug_dir / "style_embedding.pt").exists()
     assert (debug_dir / "style_adapter_output.json").exists()
     assert (debug_dir / "audio_quality_report.json").exists()
     task = svc_task_service.get_task("task-embed")
     assert task is not None
-    assert task.engine_details["embedding_dim"] == 384
+    assert task.engine_details["embedding_dim"] == 256
     assert task.engine_details["adapter_mode"] == "rule_based"
     assert task.engine_details["adapter_version"] == "v1_rule_mlp_or_rule_based"
     assert task.engine_details["audio_quality_summary"]["duration_consistency"] >= 0.0
+    assert convert_mock.call_args.kwargs["style_prompt"] == "清亮、少年感、男声"
+    assert convert_mock.call_args.kwargs["style_emb_path"].endswith("style_embedding.pt")
 
 
 def test_process_task_writes_conversion_params_json(mocker, tmp_path, monkeypatch):

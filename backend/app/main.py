@@ -24,8 +24,8 @@ async def lifespan(app: FastAPI):
     yield
 
 app = FastAPI(
-    title="Singing Voice Style Conversion API",
-    description="Hybrid singing voice conversion API with So-VITS-SVC as the default pipeline and StyleSinger as advanced mode",
+    title="歌声风格转换接口",
+    description="以后端接口框架 FastAPI 提供的歌声风格转换接口，默认主链路为 So-VITS-SVC，StyleSinger 仅作为高级实验模式保留。",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -53,7 +53,7 @@ app.include_router(style_analysis.router, prefix="/api/v1", tags=["style-analysi
 
 @app.get("/")
 async def root():
-    return {"message": "Welcome to Singing Voice Style Conversion System"}
+    return {"message": "欢迎使用歌声风格转换系统"}
 
 if __name__ == "__main__":
     import uvicorn

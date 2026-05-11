@@ -1,0 +1,6 @@
+{
+  "encoder_model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+  "embedding_dim": 256,
+  "cache_dir": "/home/featurize/work/BS/local_models/text-encoders",
+  "enabled": true
+}

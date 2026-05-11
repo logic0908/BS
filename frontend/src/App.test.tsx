@@ -262,9 +262,9 @@ describe('App demo workspace', () => {
     expect(screen.getByText('基于文本提示词控制的歌声风格转换系统')).toBeInTheDocument()
     expect(screen.getByText('v1.1 真实多风格 preset 接入工作台')).toBeInTheDocument()
     expect(screen.getByText('真实 SVC')).toBeInTheDocument()
-    expect(screen.getAllByText('Celery / Redis').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('异步任务 / Redis').length).toBeGreaterThan(0)
     expect(screen.getByText('GPU 可见')).toBeInTheDocument()
-    expect(screen.getByText('Adapter trained 已接入')).toBeInTheDocument()
+    expect(screen.getByText('Internal FiLM 已接入')).toBeInTheDocument()
     expect(screen.getByText('查看技术详情')).toBeInTheDocument()
     expect(screen.getByText('source_repo：SuCicada/Lain-so-vits-svc-4.1')).toBeInTheDocument()
     expect(screen.getByText('license：gpl')).toBeInTheDocument()
@@ -478,7 +478,7 @@ describe('App demo workspace', () => {
     })
     expect(screen.getAllByText('rmvpe').length).toBeGreaterThan(0)
     expect(
-      screen.getByText('当前提示词匹配“少年感男声”风格，但该风格尚未绑定可用 SVC 目标模型；当前不会伪装为该风格转换。'),
+      screen.getByText('当前文本提示词匹配“少年感男声”风格，但该风格尚未绑定可用 SVC 目标模型；当前不会伪装为该风格转换。'),
     ).toBeInTheDocument()
   })
 
@@ -578,7 +578,7 @@ describe('App demo workspace', () => {
     await waitFor(() => {
       expect(screen.getByText('当前提示词匹配专用风格 preset，但该 preset 尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。')).toBeInTheDocument()
     })
-    expect(screen.getByText('本次输出来自 fallback 后的实际模型，不能证明请求 preset 已接入。')).toBeInTheDocument()
+    expect(screen.getByText('本次输出来自回退后的实际模型，不能证明请求的模型预设已接入。')).toBeInTheDocument()
     expect(screen.getAllByText('final_male_youth').length).toBeGreaterThan(0)
     expect(screen.getAllByText('final_primary').length).toBeGreaterThan(0)
   })
@@ -813,7 +813,7 @@ describe('App demo workspace', () => {
     expect(screen.queryByText('转换前后风格证据对比')).not.toBeInTheDocument()
   })
 
-  it('WaveSurfer 初始化失败时会回退到原生播放器', async () => {
+  it('音频波形可视化组件初始化失败时会回退到原生播放器', async () => {
     createWaveSurferMock.mockImplementationOnce(() => {
       throw new Error('boom')
     })
@@ -834,6 +834,6 @@ describe('App demo workspace', () => {
       await flush()
     })
 
-    expect(screen.getByText('WaveSurfer 初始化失败，已回退到原生播放器。')).toBeInTheDocument()
+    expect(screen.getByText('音频波形可视化组件初始化失败，已回退到原生播放器。')).toBeInTheDocument()
   })
 })

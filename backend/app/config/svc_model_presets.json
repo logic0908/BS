@@ -46,7 +46,7 @@
       "source_url": "https://huggingface.co/Kuugo/Nova-Adult_So-Vits-SVC",
       "license": "license_unknown",
       "install_report_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_youth/install_report.json",
-      "notes": "v1.2 internal review candidate; local real smoke test passed with speaker=Nova_Adult, but license_unknown so this remains internal review only and is_demo_quality=false."
+      "notes": "v1.2 内部复核候选；已使用 speaker=Nova_Adult 完成本地真实冒烟测试，但由于 license_unknown，当前仍仅用于内部复核，is_demo_quality=false。"
     },
     {
       "preset_id": "final_male_powerful",
@@ -69,7 +69,7 @@
       "source_url": "https://huggingface.co/andreyaniv/andre-yaniv-so-vits-svc",
       "license": "license_unknown",
       "install_report_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/install_report.json",
-      "notes": "Public Hugging Face model candidate; license metadata is unknown; enabled only after local smoke test passed with model=G_15000.pth, speaker=AY, speech_encoder=vec256l9."
+      "notes": "公开 Hugging Face 模型候选；授权元数据仍不明确；仅在使用 model=G_15000.pth、speaker=AY、speech_encoder=vec256l9 完成本地冒烟测试后启用。"
     },
     {
       "preset_id": "final_female_soft",

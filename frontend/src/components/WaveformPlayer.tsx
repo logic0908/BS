@@ -1,109 +1,135 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import WaveSurfer from 'wavesurfer.js';
-import { Play, Pause, Loader2 } from 'lucide-react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import WaveSurfer from 'wavesurfer.js'
 
-interface WaveformPlayerProps {
-  audioUrl: string | null;
-  height?: number;
-  waveColor?: string;
-  progressColor?: string;
-  interact?: boolean;
+export interface WaveformPlayerHandle {
+  play: () => void
+  pause: () => void
+  stop: () => void
+  isReady: () => boolean
 }
 
-const WaveformPlayer: React.FC<WaveformPlayerProps> = ({
-  audioUrl,
-  height = 80,
-  waveColor = '#4f46e5', // indigo-600
-  progressColor = '#ec4899', // pink-500
-  interact = true,
-}) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const wavesurferRef = useRef<WaveSurfer | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isReady, setIsReady] = useState(false);
+interface WaveformPlayerProps {
+  audioUrl: string | null
+  label: string
+  waveColor?: string
+  progressColor?: string
+  height?: number
+}
 
-  const initWaveSurfer = useCallback(() => {
-    if (!containerRef.current || !audioUrl) return;
+const WaveformPlayer = forwardRef<WaveformPlayerHandle, WaveformPlayerProps>(function WaveformPlayer(
+  {
+    audioUrl,
+    label,
+    waveColor = '#1d4ed8',
+    progressColor = '#0f172a',
+    height = 96,
+  },
+  ref,
+) {
+  const containerRef = useRef<HTMLDivElement | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const waveSurferRef = useRef<WaveSurfer | null>(null)
+  const [fallbackMode, setFallbackMode] = useState(false)
+  const [isReady, setIsReady] = useState(false)
 
-    if (wavesurferRef.current) {
-      wavesurferRef.current.destroy();
-    }
-
-    const ws = WaveSurfer.create({
-      container: containerRef.current,
-      waveColor: waveColor,
-      progressColor: progressColor,
-      cursorColor: 'rgba(255,255,255,0.5)',
-      barWidth: 2,
-      barGap: 3,
-      barRadius: 3,
-      height: height,
-      normalize: true,
-      interact: interact,
-      url: audioUrl, // Load directly via URL option in v7
-    });
-
-    ws.on('ready', () => {
-      setIsReady(true);
-    });
-
-    ws.on('play', () => setIsPlaying(true));
-    ws.on('pause', () => setIsPlaying(false));
-    ws.on('finish', () => setIsPlaying(false));
-
-    wavesurferRef.current = ws;
-
-    return () => {
-      ws.destroy();
-    };
-  }, [audioUrl, height, waveColor, progressColor, interact]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      play: () => {
+        if (waveSurferRef.current) {
+          void waveSurferRef.current.play()
+          return
+        }
+        if (audioRef.current) {
+          void audioRef.current.play()
+        }
+      },
+      pause: () => {
+        if (waveSurferRef.current) {
+          waveSurferRef.current.pause()
+          return
+        }
+        audioRef.current?.pause()
+      },
+      stop: () => {
+        if (waveSurferRef.current) {
+          waveSurferRef.current.stop()
+          return
+        }
+        if (audioRef.current) {
+          audioRef.current.pause()
+          audioRef.current.currentTime = 0
+        }
+      },
+      isReady: () => isReady || Boolean(audioRef.current),
+    }),
+    [isReady],
+  )
 
   useEffect(() => {
-    const cleanup = initWaveSurfer();
-    return () => {
-      cleanup?.();
-    };
-  }, [initWaveSurfer]);
+    setIsReady(false)
+    setFallbackMode(false)
 
-  const togglePlay = () => {
-    if (wavesurferRef.current) {
-      wavesurferRef.current.playPause();
+    if (!audioUrl || !containerRef.current) {
+      waveSurferRef.current?.destroy()
+      waveSurferRef.current = null
+      return
     }
-  };
 
-  if (!audioUrl) return null;
+    try {
+      const waveSurfer = WaveSurfer.create({
+        container: containerRef.current,
+        height,
+        waveColor,
+        progressColor,
+        cursorColor: '#94a3b8',
+        normalize: true,
+        barWidth: 2,
+        barGap: 2,
+        barRadius: 2,
+      })
+      waveSurferRef.current = waveSurfer
+
+      waveSurfer.on('ready', () => setIsReady(true))
+      waveSurfer.on('error', () => {
+        setFallbackMode(true)
+        setIsReady(false)
+        waveSurfer.destroy()
+        waveSurferRef.current = null
+      })
+      waveSurfer.load(audioUrl)
+    } catch {
+      setFallbackMode(true)
+      waveSurferRef.current?.destroy()
+      waveSurferRef.current = null
+    }
+
+    return () => {
+      waveSurferRef.current?.destroy()
+      waveSurferRef.current = null
+    }
+  }, [audioUrl, height, progressColor, waveColor])
+
+  if (!audioUrl) {
+    return <div className="waveform-placeholder">音频就绪后将在这里显示波形。</div>
+  }
 
   return (
-    <div className="w-full bg-surface/50 rounded-xl p-4 border border-slate-700/50 backdrop-blur-sm">
-      <div className="flex items-center gap-4">
-        <button
-          onClick={togglePlay}
-          disabled={!isReady}
-          className={`flex-shrink-0 w-12 h-12 flex items-center justify-center rounded-full transition-all duration-200 ${
-            isReady 
-              ? 'bg-primary hover:bg-primary/90 text-white shadow-lg shadow-primary/25' 
-              : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-          }`}
-        >
-          {!isReady ? (
-            <Loader2 className="w-5 h-5 animate-spin" />
-          ) : isPlaying ? (
-            <Pause className="w-5 h-5 fill-current" />
-          ) : (
-            <Play className="w-5 h-5 fill-current ml-1" />
-          )}
-        </button>
-
-        <div className="flex-grow relative h-[80px]" ref={containerRef}>
-          {!isReady && (
-            <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-400">
-              Loading waveform...
-            </div>
-          )}
+    <div className="waveform-player">
+      <div className="waveform-label">{label}</div>
+      {fallbackMode ? (
+        <div className="waveform-fallback" data-testid={`waveform-fallback-${label}`}>
+          <div className="waveform-fallback-note">音频波形可视化组件初始化失败，已回退到原生播放器。</div>
+          <audio ref={audioRef} controls className="fallback-audio" src={audioUrl} />
         </div>
-      </div>
+      ) : (
+        <div className="waveform-stage">
+          <div ref={containerRef} className="waveform-canvas" />
+          {!isReady && <div className="waveform-loading">正在加载波形…</div>}
+        </div>
+      )}
     </div>
-  );
-};
+  )
+})
 
-export default WaveformPlayer;
+export default WaveformPlayer

@@ -16,11 +16,11 @@ const RAW_FEATURE_ROWS = [
   { key: 'spectral_bandwidth_mean', label: '频谱带宽均值' },
   { key: 'spectral_rolloff_mean', label: '频谱滚降均值' },
   { key: 'zero_crossing_rate_mean', label: '过零率均值' },
-  { key: 'f0_median', label: 'F0 中位数' },
+  { key: 'f0_median', label: '基频 F0 中位数' },
   { key: 'voiced_ratio', label: '有声帧比例' },
-  { key: 'low_energy_ratio', label: '低频能量占比' },
-  { key: 'mid_energy_ratio', label: '中频能量占比' },
-  { key: 'high_energy_ratio', label: '高频能量占比' },
+  { key: 'low_energy_ratio', label: '低能量片段比例' },
+  { key: 'mid_energy_ratio', label: '中能量片段比例' },
+  { key: 'high_energy_ratio', label: '高能量片段比例' },
 ]
 
 function StyleEvidencePanel({ analysis, promptText, fallbackNotice }: StyleEvidencePanelProps) {
@@ -28,7 +28,7 @@ function StyleEvidencePanel({ analysis, promptText, fallbackNotice }: StyleEvide
     <div className="style-evidence-panel">
       <div className="section-header">
         <div>
-          <div className="section-kicker">Style Evidence</div>
+          <div className="section-kicker">风格证据</div>
           <h2>转换前后风格证据对比</h2>
           <p>该面板基于音高、能量、频谱等可测指标，辅助展示转换是否朝提示词方向移动。</p>
         </div>
@@ -54,7 +54,7 @@ function StyleEvidencePanel({ analysis, promptText, fallbackNotice }: StyleEvide
                   : ['未命中明确关键词']
                 ).map((keyword) => (
                   <span key={keyword} className="summary-pill">
-                    <span>keyword</span>
+                    <span>关键词</span>
                     <strong>{keyword}</strong>
                   </span>
                 ))}
@@ -165,13 +165,13 @@ function StyleEvidencePanel({ analysis, promptText, fallbackNotice }: StyleEvide
           <p>{analysis.summary.text}</p>
           <div className="config-summary">
             <div className="summary-pill">
-              <span>matched</span>
+              <span>匹配项</span>
               <strong>
                 {analysis.summary.matched_count}/{analysis.summary.total_count}
               </strong>
             </div>
             <div className="summary-pill">
-              <span>score</span>
+              <span>得分</span>
               <strong>{formatMetricValue(analysis.summary.score)}</strong>
             </div>
           </div>
@@ -214,14 +214,14 @@ function BarMetric({ label, value, tone }: { label: string; value: number; tone:
 
 function formatMetricValue(value: number | null | undefined): string {
   if (typeof value !== 'number' || Number.isNaN(value)) {
-    return 'n/a'
+    return '暂无'
   }
   return value.toFixed(3)
 }
 
 function formatSignedValue(value: number | null): string {
   if (typeof value !== 'number' || Number.isNaN(value)) {
-    return 'n/a'
+    return '暂无'
   }
   return `${value > 0 ? '+' : ''}${value.toFixed(3)}`
 }

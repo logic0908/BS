@@ -147,8 +147,8 @@ function App() {
   const activePresetStatusLabel = activePreset?.ready ? '已配置' : '未绑定模型'
   const unconfiguredPresetNotice = !activePresetConfigured
     ? allowPresetFallback
-      ? '当前选中的目标模型 preset 尚未真正配置完成；开启 fallback 后会回退到 final_primary/lain，并把请求 preset 与实际使用 preset 分开记录。'
-      : '当前选中的目标模型 preset 尚未真正配置完成；严格模式下该 preset 不能推理，也不会伪装成该风格。'
+      ? '当前选中的目标模型预设尚未真正配置完成；开启 `allow_preset_fallback` 后会回退到 final_primary/lain，并把请求模型预设与实际使用模型预设分开记录。'
+      : '当前选中的目标模型预设尚未真正配置完成；严格模式下该模型预设不能推理，也不会伪装成该风格。'
     : null
 
   useEffect(() => {
@@ -375,6 +375,7 @@ function App() {
       const response = await axios.post('/api/v1/convert', {
         vocals_id: vocalsId,
         prompt_text: promptText,
+        style_prompt: promptText,
         style_strength: styleStrength,
         model_preset_id: modelPresetId,
         transpose,
@@ -540,14 +541,15 @@ function App() {
               <div className="hero-kicker">v1.1 真实多风格 preset 接入工作台</div>
               <h1>基于文本提示词控制的歌声风格转换系统</h1>
               <p>
-                默认主链路为 So-VITS-SVC。当前默认模型为 <strong>final_primary / lain</strong>，Redis/Celery
-                负责真实异步任务，StyleSinger 仅保留为高级实验模式，不是默认内容保持型 SVC。
+                默认主链路为歌声转换模型（So-VITS-SVC）。当前默认模型为 <strong>final_primary / lain</strong>，
+                Redis 作为内存数据库与消息中间件，Celery 负责真实异步任务；StyleSinger 仅保留为高级实验模式，
+                不是默认内容保持型 SVC。
               </p>
             </div>
             <div className="hero-badges">
-              <StatusBadge label={mockMode ? 'Mock SVC' : '真实 SVC'} tone={mockMode ? 'warning' : 'success'} />
+              <StatusBadge label={mockMode ? '模拟 SVC' : '真实 SVC'} tone={mockMode ? 'warning' : 'success'} />
               <StatusBadge
-                label={effectiveTaskBackendMode === 'celery' ? 'Celery / Redis' : '本地任务'}
+                label={effectiveTaskBackendMode === 'celery' ? '异步任务 / Redis' : '本地任务'}
                 tone={effectiveTaskBackendMode === 'celery' ? 'success' : 'neutral'}
               />
               <StatusBadge
@@ -561,8 +563,14 @@ function App() {
                 tone={gpuStatus === 'visible' ? 'success' : gpuStatus === 'missing' ? 'warning' : 'neutral'}
               />
               <StatusBadge
-                label={currentResultMetadata?.adapter_mode === 'trained' ? 'Adapter trained' : 'Adapter trained 已接入'}
-                tone={currentResultMetadata?.adapter_mode === 'trained' ? 'success' : 'primary'}
+                label={
+                  (currentResultMetadata?.condition_mode ?? 'internal_film') === 'internal_film'
+                    ? currentResultMetadata?.executed_internal_film
+                      ? 'Internal FiLM 已执行'
+                      : 'Internal FiLM 已接入'
+                    : '内部注入已关闭'
+                }
+                tone={(currentResultMetadata?.condition_mode ?? 'internal_film') === 'internal_film' ? 'success' : 'neutral'}
               />
             </div>
           </section>
@@ -570,7 +578,7 @@ function App() {
           <section className="surface-card">
             <div className="section-header">
               <div>
-                <div className="section-kicker">Demo Workspace</div>
+                <div className="section-kicker">正式演示</div>
                 <h2>正式演示工作台</h2>
                 <p>左侧准备输入与风格提示，右侧查看任务状态并启动默认 SVC 转换。</p>
               </div>
@@ -655,7 +663,7 @@ function App() {
                 <article className="subcard">
                   <div className="subcard-header">
                     <h3>文本提示词</h3>
-                    <span className="subcard-tag">TextStyleEncoder + Adapter</span>
+                    <span className="subcard-tag">TextStyleEncoder + internal FiLM</span>
                   </div>
                   <label className="field-label" htmlFor="prompt-textarea">
                     目标风格描述
@@ -738,14 +746,14 @@ function App() {
                           ))}
                         </select>
                         <span className="field-help">
-                          默认保持 `final_primary`；`tech_villager` 仅作为技术 fallback，不会被默认选中。
+                          默认保持 `final_primary`；`tech_villager` 仅作为技术回退，不会被默认选中。
                         </span>
                         {activePreset && (
                           <div className="preset-meta-card">
                             <strong>{activePreset.display_name}</strong>
                             <span>{`状态：${activePresetStatusLabel}`}</span>
-                            <span>{`speaker：${activePreset.speaker || 'n/a'}`}</span>
-                            <span>{`source_repo：${activePreset.source_repo || 'n/a'}`}</span>
+                            <span>{`speaker：${activePreset.speaker || '暂无'}`}</span>
+                            <span>{`source_repo：${activePreset.source_repo || '暂无'}`}</span>
                             <span>{`license：${activePreset.license || 'license_unknown'}`}</span>
                           </div>
                         )}
@@ -759,7 +767,7 @@ function App() {
                           <option value="harvest">harvest</option>
                           <option value="dio">dio</option>
                         </select>
-                        <span className="field-help">若当前环境不支持 rmvpe，系统会记录 fallback_reason，并回退到当前集成默认值。</span>
+                        <span className="field-help">若当前环境不支持 rmvpe，系统会记录 `fallback_reason`，并回退到当前集成默认值。</span>
                       </label>
 
                       <label className="form-field">
@@ -818,7 +826,7 @@ function App() {
                           onChange={(event) => setAllowPresetFallback(event.target.checked)}
                           disabled={isConverting}
                         />
-                        <span className="field-help">默认关闭。开启后仅用于演示续跑，会明确标记请求 preset 与实际使用 preset。</span>
+                        <span className="field-help">默认关闭。开启后仅用于演示续跑，会明确标记请求模型预设与实际使用模型预设。</span>
                       </label>
                     </div>
                   </details>
@@ -837,13 +845,13 @@ function App() {
                     <MetricItem label="当前进度" value={`${taskProgress}%`} />
                     <MetricItem label="任务后端" value={formatTaskBackendMode(effectiveTaskBackendMode)} />
                     <MetricItem label="默认模型" value={`${activePreset?.preset_id ?? 'final_primary'} / ${activePreset?.speaker ?? 'lain'}`} />
-                    <MetricItem label="preset 已配置" value={formatBool(currentResultMetadata?.model_preset_ready ?? activePresetConfigured)} />
-                    <MetricItem label="请求风格 preset" value={String(requestedModelPresetId ?? 'n/a')} />
-                    <MetricItem label="实际使用 preset" value={String(effectiveModelPresetId ?? 'n/a')} />
-                    <MetricItem label="发生 fallback" value={formatBool(presetFallbackUsed)} />
+                    <MetricItem label="预设已配置" value={formatBool(currentResultMetadata?.model_preset_ready ?? activePresetConfigured)} />
+                    <MetricItem label="请求模型预设" value={String(requestedModelPresetId ?? '暂无')} />
+                    <MetricItem label="实际使用预设" value={String(effectiveModelPresetId ?? '暂无')} />
+                    <MetricItem label="发生回退" value={formatBool(presetFallbackUsed)} />
                     <MetricItem label="f0_method" value={String(effectiveF0Method ?? 'system_default')} />
                     <MetricItem label="auto_predict_f0" value={formatBool(effectiveAutoPredictF0)} />
-                    <MetricItem label="adapter_mode" value={formatAdapterMode(currentResultMetadata?.adapter_mode)} />
+                    <MetricItem label="condition_mode" value={String(currentResultMetadata?.condition_mode ?? 'internal_film')} />
                   </div>
 
                   <div className="config-summary">
@@ -855,7 +863,7 @@ function App() {
                   </div>
 
                   {mockMode ? (
-                    <Notice tone="warning">当前处于 Mock SVC，只适合流程演示；要展示真实效果，请确保后端返回真实 SVC 模式。</Notice>
+                    <Notice tone="warning">当前处于模拟 SVC，只适合流程演示；要展示真实效果，请确保后端返回真实 SVC 模式。</Notice>
                   ) : (
                     <Notice tone="success">当前目标为真实本地 So-VITS-SVC 推理，默认模型为 final_primary/lain。</Notice>
                   )}
@@ -865,13 +873,13 @@ function App() {
                   {presetFallbackUsed && (
                     <Notice tone="warning">
                       {currentResultMetadata?.preset_fallback_reason ||
-                        '当前提示词匹配专用风格 preset，但该 preset 尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。'}
+                        '当前文本提示词匹配到专用风格模型预设，但该模型预设尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。'}
                     </Notice>
                   )}
 
                   {selectedStyleNeedsDedicatedPreset && !selectedStylePresetReady && (
                     <Notice tone="warning">
-                      当前提示词匹配“{selectedStyle?.style_label ?? selectedStyle?.description ?? '目标风格'}”风格，但该风格尚未绑定可用 SVC 目标模型；当前不会伪装为该风格转换。
+                      当前文本提示词匹配“{selectedStyle?.style_label ?? selectedStyle?.description ?? '目标风格'}”风格，但该风格尚未绑定可用 SVC 目标模型；当前不会伪装为该风格转换。
                     </Notice>
                   )}
 
@@ -881,6 +889,12 @@ function App() {
 
                   <Notice tone="info">
                     当前转换效果主要受目标模型、输入音频质量、F0 提取质量以及人声分离质量影响。
+                  </Notice>
+
+                  <Notice tone={currentResultMetadata?.condition_mode === 'internal_film' ? 'success' : 'warning'}>
+                    {currentResultMetadata?.condition_mode === 'internal_film'
+                      ? '默认真实链路会把文本提示词编码为 style embedding，并在 So-VITS-SVC decoder 前执行内部 Bias/Scale 调制。'
+                      : '当前后端已关闭 internal FiLM，真实推理会回退到原始 So-VITS-SVC 路径。'}
                   </Notice>
 
                   <Notice tone="info">提升建议：使用更匹配的目标模型、纯净干声、合适的 F0 方法与转调参数。</Notice>
@@ -904,7 +918,7 @@ function App() {
           <section className="surface-card">
             <div className="section-header">
               <div>
-                <div className="section-kicker">Audio Compare</div>
+                <div className="section-kicker">音频对比</div>
                 <h2>A/B 波形对比</h2>
                 <p>上传成功后显示原始音频波形，转换成功后自动补齐转换波形，并提供统一播放控制。</p>
               </div>
@@ -934,7 +948,7 @@ function App() {
                   analysis={styleEvidence}
                   promptText={promptText}
                   fallbackNotice={
-                    presetFallbackUsed ? '本次输出来自 fallback 后的实际模型，不能证明请求 preset 已接入。' : null
+                    presetFallbackUsed ? '本次输出来自回退后的实际模型，不能证明请求的模型预设已接入。' : null
                   }
                 />
               ) : null}
@@ -948,9 +962,9 @@ function App() {
           >
             <summary className="details-summary">
               <div>
-                <div className="section-kicker">Advanced Details</div>
+                <div className="section-kicker">技术详情</div>
                 <h2>查看技术详情</h2>
-                <p>这里集中放 Adapter、audio_quality、GPU telemetry 和高级实验入口，不干扰主演示流程。</p>
+                <p>这里集中放文本风格适配器、音频质量摘要、GPU运行证据记录和高级实验入口，不干扰主演示流程。</p>
               </div>
               <ChevronDown className={`summary-icon ${techDetailsOpen ? 'open' : ''}`} />
             </summary>
@@ -959,29 +973,31 @@ function App() {
               <article className="detail-card">
                 <div className="detail-card-header">
                   <Sparkles className="detail-icon" />
-                  <h3>Adapter 与模型说明</h3>
+                  <h3>文本风格适配器与模型说明</h3>
                 </div>
                 <p className="muted-text">
-                  当前 TextStyleAdapter 是训练型参数级控制，不是 So-VITS-SVC 网络内部 Bias/Scale 注入。
+                  当前主链路默认启用 internal FiLM。TextStyleAdapter 仍负责提示词到 preset/参数的辅助映射，真正的网络内部 Bias/Scale 注入发生在 So-VITS-SVC decoder 前。
                 </p>
                 <div className="metric-grid compact">
+                  <MetricItem label="condition_mode" value={String(currentResultMetadata?.condition_mode ?? 'internal_film')} />
+                  <MetricItem label="内部注入已执行" value={formatBool(currentResultMetadata?.executed_internal_film)} />
+                  <MetricItem label="film_target" value={String(currentResultMetadata?.film_target ?? 'pre_decoder')} />
+                  <MetricItem label="film_strength" value={formatNullableNumber(currentResultMetadata?.film_strength)} />
                   <MetricItem label="adapter_mode" value={formatAdapterMode(currentResultMetadata?.adapter_mode)} />
                   <MetricItem label="adapter_version" value={String(currentResultMetadata?.adapter_version ?? '待任务结果')} />
-                  <MetricItem label="text encoding" value={formatTextEncodingStatus(currentResultMetadata)} />
-                  <MetricItem label="effective strength" value={formatNullableNumber(currentResultMetadata?.effective_style_strength ?? styleStrength)} />
-                  <MetricItem label="f0_method" value={String(effectiveF0Method ?? 'system_default')} />
-                  <MetricItem label="auto_predict_f0" value={formatBool(effectiveAutoPredictF0)} />
+                  <MetricItem label="文本编码状态" value={formatTextEncodingStatus(currentResultMetadata)} />
+                  <MetricItem label="实际风格强度" value={formatNullableNumber(currentResultMetadata?.effective_style_strength ?? styleStrength)} />
                 </div>
                 {selectedStyle ? (
                   <div className="selected-style-card">
-                    <div className="field-label">selected_style</div>
+                    <div className="field-label">匹配风格说明</div>
                     <div className="style-reason">{String(selectedStyle.reason ?? '暂无风格匹配说明。')}</div>
                     <div className="config-summary">
                       <SummaryPill label="style_id" value={String(selectedStyle.style_id ?? 'n/a')} />
                       <SummaryPill label="preset" value={String(selectedStyle.model_preset_id ?? currentResultMetadata?.model_preset_id ?? 'n/a')} />
                       <SummaryPill label="transpose" value={String(selectedStyle.transpose ?? transpose)} />
                       <SummaryPill
-                        label="dedicated_model"
+                        label="专用模型"
                         value={selectedStyle.current_style_has_dedicated_model ? (selectedStyle.model_preset_ready ? 'ready' : 'missing') : 'baseline'}
                       />
                     </div>
@@ -995,34 +1011,34 @@ function App() {
               <article className="detail-card">
                 <div className="detail-card-header">
                   <Wand2 className="detail-icon" />
-                  <h3>audio_quality</h3>
+                  <h3>音频质量摘要</h3>
                 </div>
                 <div className="detail-section">
                   <div className="field-label">上传输入质量</div>
                   <div className="metric-grid compact">
-                    <MetricItem label="quality_level" value={formatQualityLabel(inputQuality?.quality_level ?? null)} />
+                    <MetricItem label="质量等级" value={formatQualityLabel(inputQuality?.quality_level ?? null)} />
                     <MetricItem label="rms" value={formatNullableNumber(inputQuality?.rms)} />
                     <MetricItem label="peak" value={formatNullableNumber(inputQuality?.peak)} />
-                    <MetricItem label="low_energy_ratio" value={formatNullableNumber(inputQuality?.low_energy_ratio)} />
+                    <MetricItem label="低能量片段比例" value={formatNullableNumber(inputQuality?.low_energy_ratio)} />
                   </div>
                 </div>
                 <div className="detail-section">
                   <div className="field-label">输出摘要</div>
                   <div className="metric-grid compact">
                     <MetricItem
-                      label="duration_consistency"
+                      label="时长一致性"
                       value={formatNullableNumber(currentResultMetadata?.audio_quality_summary?.duration_consistency)}
                     />
                     <MetricItem
-                      label="low_energy_ratio"
+                      label="低能量片段比例"
                       value={formatNullableNumber(currentResultMetadata?.audio_quality_summary?.low_energy_ratio)}
                     />
                     <MetricItem
-                      label="possible_dropouts"
+                      label="疑似断音"
                       value={formatBool(currentResultMetadata?.audio_quality_summary?.possible_dropouts)}
                     />
                     <MetricItem
-                      label="report_path"
+                      label="报告路径"
                       value={String(currentResultMetadata?.audio_quality_report_path ?? '待生成')}
                     />
                   </div>
@@ -1032,15 +1048,15 @@ function App() {
               <article className="detail-card">
                 <div className="detail-card-header">
                   <Cpu className="detail-icon" />
-                  <h3>GPU telemetry</h3>
+                  <h3>GPU运行证据记录</h3>
                 </div>
                 <div className="metric-grid compact">
                   <MetricItem label="device" value={String(currentResultMetadata?.device ?? sovitsCheck?.SOVITS_DEVICE ?? '未检测')} />
                   <MetricItem label="torch cuda" value={formatBool(sovitsCheck?.torch_cuda_available)} />
                   <MetricItem label="backend" value={formatTaskBackendMode(effectiveTaskBackendMode)} />
-                  <MetricItem label="model display" value={String(currentResultMetadata?.model_display_name ?? activePreset?.display_name ?? '待任务结果')} />
+                  <MetricItem label="模型展示名" value={String(currentResultMetadata?.model_display_name ?? activePreset?.display_name ?? '待任务结果')} />
                 </div>
-                <div className="path-box">{currentResultMetadata?.gpu_telemetry_debug_path ?? '任务完成后将在这里显示 GPU telemetry 路径。'}</div>
+                <div className="path-box">{currentResultMetadata?.gpu_telemetry_debug_path ?? '任务完成后将在这里显示 GPU运行证据记录路径。'}</div>
                 <div className="muted-text">GPU 证据请以 `gpu_telemetry.txt` 与 `sovits_command.txt` 为准，不直接把调试 JSON 暴露到主演示区。</div>
               </article>
             </div>
@@ -1053,14 +1069,14 @@ function App() {
               <summary>
                 <div>
                   <h3>StyleSinger 高级实验模式</h3>
-                  <p>非默认内容保持型 SVC，仅用于 metadata / 四维特征实验，不替代当前 So-VITS-SVC 主链路。</p>
+                  <p>非默认内容保持型 SVC，仅用于元数据 / 四维特征实验，不替代当前 So-VITS-SVC 主链路。</p>
                 </div>
                 <ChevronDown className={`summary-icon ${styleSingerOpen ? 'open' : ''}`} />
               </summary>
               <div className="nested-content">
                 <div className="button-row">
                   <button type="button" className="secondary-button" onClick={handleExtractFeatures} disabled={!inputAudio || isConverting || isUploading}>
-                    extract_features
+                    提取特征
                   </button>
                   <button type="button" className="secondary-button" onClick={handleStyleSingerConvert} disabled={!inputAudio || isConverting || isUploading}>
                     使用 StyleSinger 高级模式转换
@@ -1195,11 +1211,21 @@ function normalizeResultMetadata(taskData?: TaskResponse | null): ResultMetadata
     gpu_telemetry_debug_path: stringOrNull(taskMeta.gpu_telemetry_debug_path ?? taskData?.gpu_telemetry_debug_path),
     task_backend_mode: stringOrNull(taskMeta.task_backend_mode ?? taskData?.task_backend_mode),
     encoder_model_name: stringOrNull(taskMeta.encoder_model_name ?? taskData?.encoder_model_name),
+    encoder_type: stringOrNull(taskMeta.encoder_type ?? taskData?.encoder_type),
     embedding_dim: numberOrNull(taskMeta.embedding_dim ?? taskData?.embedding_dim),
     embedding_norm: numberOrNull(taskMeta.embedding_norm ?? taskData?.embedding_norm),
     top_keywords: arrayOfString(taskMeta.top_keywords ?? taskData?.top_keywords),
     text_encoding_status: stringOrNull(taskMeta.text_encoding_status ?? taskData?.text_encoding_status),
     text_encoding_enabled: coerceBoolean(taskMeta.text_encoding_enabled ?? taskData?.text_encoding_enabled),
+    condition_mode: stringOrNull(taskMeta.condition_mode ?? taskData?.condition_mode),
+    style_prompt: stringOrNull(taskMeta.style_prompt ?? taskData?.style_prompt),
+    style_emb_path: stringOrNull(taskMeta.style_emb_path ?? taskData?.style_emb_path),
+    style_emb_format: stringOrNull(taskMeta.style_emb_format ?? taskData?.style_emb_format),
+    film_strength: numberOrNull(taskMeta.film_strength ?? taskData?.film_strength),
+    film_target: stringOrNull(taskMeta.film_target ?? taskData?.film_target),
+    executed_internal_film: coerceBoolean(taskMeta.executed_internal_film ?? taskData?.executed_internal_film),
+    called_conditioned_inference: coerceBoolean(taskMeta.called_conditioned_inference ?? taskData?.called_conditioned_inference),
+    conditioning_report_path: stringOrNull(taskMeta.conditioning_report_path ?? taskData?.conditioning_report_path),
     adapter_enabled: coerceBoolean(taskMeta.adapter_enabled ?? taskData?.adapter_enabled),
     adapter_mode: stringOrNull(taskMeta.adapter_mode ?? taskData?.adapter_mode),
     adapter_version: stringOrNull(taskMeta.adapter_version ?? taskData?.adapter_version),
@@ -1336,7 +1362,7 @@ function getGpuStatus(sovitsCheck: SovitsCheckResponse | null) {
 
 function formatPresetOptionLabel(preset: ModelPresetStatus) {
   const suffix = preset.ready ? '已配置' : '未绑定模型'
-  return preset.preset_id === 'tech_villager' ? `tech_villager fallback / ${suffix}` : `${preset.preset_id} / ${suffix}`
+  return preset.preset_id === 'tech_villager' ? `tech_villager 技术回退 / ${suffix}` : `${preset.preset_id} / ${suffix}`
 }
 
 function formatBytes(bytes: number) {
@@ -1444,7 +1470,7 @@ function getStageLabel(stage: string | null | undefined) {
     case 'text_encoded':
       return '文本已编码'
     case 'adapter_applied':
-      return 'Adapter 已应用'
+      return '文本风格适配器已应用'
     case 'inference_running':
       return 'SVC 推理中'
     case 'quality_evaluated':
@@ -1460,20 +1486,20 @@ function getStageLabel(stage: string | null | undefined) {
 
 function formatTaskBackendMode(mode: string | null | undefined) {
   if (mode === 'celery') {
-    return 'Celery / Redis'
+    return '异步任务 / Redis'
   }
   if (mode === 'local') {
-    return 'BackgroundTasks / 本地'
+    return '本地后台任务'
   }
   return mode || '未检测'
 }
 
 function formatAdapterMode(mode: string | null | undefined) {
   if (mode === 'trained') {
-    return 'trained'
+    return '训练型适配器'
   }
   if (mode === 'rule_based') {
-    return 'rule_based'
+    return '规则适配器'
   }
   return mode || '待任务结果'
 }
@@ -1490,7 +1516,7 @@ function formatTextEncodingStatus(metadata: ResultMetadata | null | undefined) {
 
 function formatNullableNumber(value: number | null | undefined, unit = '', digits = 4) {
   if (typeof value !== 'number' || Number.isNaN(value)) {
-    return 'n/a'
+    return '暂无'
   }
   const formatted = digits === 0 ? value.toFixed(0) : value.toFixed(digits)
   return unit ? `${formatted}${unit}` : formatted
@@ -1503,7 +1529,7 @@ function formatBool(value: boolean | null | undefined) {
   if (value === false) {
     return '否'
   }
-  return 'n/a'
+  return '暂无'
 }
 
 function detectPromptConflict(prompt: string) {
