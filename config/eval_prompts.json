@@ -1,0 +1,166 @@
+{
+  "version": "2026-05-12",
+  "default_preset": "final_primary",
+  "prompts": [
+    {
+      "prompt_id": "prompt_001",
+      "text": "温柔、明亮、流行感更强的女声风格",
+      "expected_style_direction": {
+        "brightness": "up",
+        "energy": "up",
+        "pitch_height": "up",
+        "softness": "up",
+        "thickness": "down",
+        "emotion_intensity": "up"
+      },
+      "preset_availability": {
+        "final_primary": "available",
+        "final_male_youth": "available_but_license_unknown",
+        "final_male_powerful": "available_but_specialized",
+        "final_female_soft": "unavailable",
+        "final_female_clear": "unavailable"
+      },
+      "notes": "女声方向目前只能先走 final_primary/internal_film 工程验证，不能伪装成真实已绑定女声专用模型。"
+    },
+    {
+      "prompt_id": "prompt_002",
+      "text": "清亮、少年感、流行男声",
+      "expected_style_direction": {
+        "brightness": "up",
+        "energy": "up",
+        "pitch_height": "up",
+        "softness": "neutral",
+        "thickness": "down",
+        "emotion_intensity": "up"
+      },
+      "preset_availability": {
+        "final_primary": "available",
+        "final_male_youth": "available_but_license_unknown",
+        "final_male_powerful": "available_but_specialized",
+        "final_female_soft": "unavailable",
+        "final_female_clear": "unavailable"
+      },
+      "notes": "适合验证 bright/youth 方向，但仍需主观听评确认风格差异是否明显。"
+    },
+    {
+      "prompt_id": "prompt_003",
+      "text": "低沉、磁性、叙事感",
+      "expected_style_direction": {
+        "brightness": "down",
+        "energy": "neutral",
+        "pitch_height": "down",
+        "softness": "neutral",
+        "thickness": "up",
+        "emotion_intensity": "neutral"
+      },
+      "preset_availability": {
+        "final_primary": "available",
+        "final_male_youth": "available_but_license_unknown",
+        "final_male_powerful": "available_but_specialized",
+        "final_female_soft": "unavailable",
+        "final_female_clear": "unavailable"
+      },
+      "notes": "适合与 final_male_powerful 对照，但 specialized preset 不能直接当成文本控制优越性的结论。"
+    },
+    {
+      "prompt_id": "prompt_004",
+      "text": "激昂、有力量、摇滚感",
+      "expected_style_direction": {
+        "brightness": "up",
+        "energy": "up",
+        "pitch_height": "neutral",
+        "softness": "down",
+        "thickness": "up",
+        "emotion_intensity": "up"
+      },
+      "preset_availability": {
+        "final_primary": "available",
+        "final_male_youth": "available_but_license_unknown",
+        "final_male_powerful": "available_but_specialized",
+        "final_female_soft": "unavailable",
+        "final_female_clear": "unavailable"
+      },
+      "notes": "更适合 external preset 与强度对照的案例。"
+    },
+    {
+      "prompt_id": "prompt_005",
+      "text": "甜美、轻柔、治愈感",
+      "expected_style_direction": {
+        "brightness": "up",
+        "energy": "down",
+        "pitch_height": "up",
+        "softness": "up",
+        "thickness": "down",
+        "emotion_intensity": "neutral"
+      },
+      "preset_availability": {
+        "final_primary": "available",
+        "final_male_youth": "available_but_license_unknown",
+        "final_male_powerful": "available_but_specialized",
+        "final_female_soft": "unavailable",
+        "final_female_clear": "unavailable"
+      },
+      "notes": "当前更适合作为 internal_film 小样本趋势验证，而不是女声专模结论。"
+    },
+    {
+      "prompt_id": "prompt_006",
+      "text": "民谣感、自然、温暖",
+      "expected_style_direction": {
+        "brightness": "neutral",
+        "energy": "down",
+        "pitch_height": "neutral",
+        "softness": "up",
+        "thickness": "up",
+        "emotion_intensity": "neutral"
+      },
+      "preset_availability": {
+        "final_primary": "available",
+        "final_male_youth": "available_but_license_unknown",
+        "final_male_powerful": "available_but_specialized",
+        "final_female_soft": "unavailable",
+        "final_female_clear": "unavailable"
+      },
+      "notes": "适合检验 low-energy / warm 方向是否可测。"
+    },
+    {
+      "prompt_id": "prompt_007",
+      "text": "情绪更饱满、戏剧化",
+      "expected_style_direction": {
+        "brightness": "neutral",
+        "energy": "up",
+        "pitch_height": "up",
+        "softness": "neutral",
+        "thickness": "up",
+        "emotion_intensity": "up"
+      },
+      "preset_availability": {
+        "final_primary": "available",
+        "final_male_youth": "available_but_license_unknown",
+        "final_male_powerful": "available_but_specialized",
+        "final_female_soft": "unavailable",
+        "final_female_clear": "unavailable"
+      },
+      "notes": "需要结合人工听评判断“戏剧化”是否真的可感知。"
+    },
+    {
+      "prompt_id": "prompt_008",
+      "text": "更冷静、克制、低能量",
+      "expected_style_direction": {
+        "brightness": "down",
+        "energy": "down",
+        "pitch_height": "down",
+        "softness": "neutral",
+        "thickness": "up",
+        "emotion_intensity": "down"
+      },
+      "preset_availability": {
+        "final_primary": "available",
+        "final_male_youth": "available_but_license_unknown",
+        "final_male_powerful": "available_but_specialized",
+        "final_female_soft": "unavailable",
+        "final_female_clear": "unavailable"
+      },
+      "notes": "适合验证 negative direction prompt 是否会被系统弱响应。"
+    }
+  ]
+}

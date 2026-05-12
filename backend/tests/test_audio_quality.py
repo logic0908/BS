@@ -14,12 +14,15 @@ def test_audio_quality_report_contains_expected_metrics(tmp_path):
 
     report = analyze_audio_pair(str(input_path), str(output_path))
 
-    assert report["input_audio"]["duration"] > 0
+    assert report["input_audio"]["duration_seconds"] > 0
     assert report["output_audio"]["sample_rate"] == 44100
     assert "low_energy_ratio" in report["summary"]
     assert "possible_dropouts" in report["summary"]
+    assert "comparisons" in report
+    assert "style_direction_metrics" in report["comparisons"]
 
     report_path = write_audio_quality_report(tmp_path / "debug", report)
     payload = json.loads((tmp_path / "debug" / "audio_quality_report.json").read_text(encoding="utf-8"))
     assert report_path.endswith("audio_quality_report.json")
     assert payload["summary"]["duration_consistency"] >= 0.0
+    assert "warnings" in payload

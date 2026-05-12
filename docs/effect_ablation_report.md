@@ -1,139 +1,81 @@
 # Effect Ablation Report
 
-本文档用于整理当前项目的消融实验设计、真实 smoke 对照和论文中可引用的实验边界说明。
+## 目标
 
-## 1. 实验目标
+当前消融实验不用于夸大“强文本风格控制已完成”，而是用于补齐三类证据：
 
-当前项目的实验重点不是直接证明“强文本语义可控的高质量歌声转换效果”，而是验证：
+1. `film_strength` 多档配置是否已经形成可复现的实验框架
+2. `none / external_preset / internal_film` 是否已经在工程上分离记录
+3. 实验记录是否已经能导出为论文表格和答辩展示材料
 
-1. 文本提示词是否能稳定生成确定性 `style_emb`
-2. `style_emb` 是否能进入 So-VITS-SVC 真实推理链路
-3. 内部 Bias/Scale / FiLM 注入机制是否在真实 GPU 环境中执行
-4. baseline 与 `internal_film` 是否都能生成有效音频输出
+## A. Film Strength Ablation
 
-## 2. 三组核心对照
+推荐实验组：
 
-### 2.1 `none`
+1. `none` 或 `internal_film strength=0`
+2. `internal_film strength=0.05`
+3. `internal_film strength=0.10`
+4. `internal_film strength=0.15`
 
-- 含义：关闭内部文本条件注入
-- 配置：`SOVITS_CONDITION_MODE=none`
-- 入口：原始 `inference_main.py`
+脚本：
 
-### 2.2 `external_preset`
-
-- 含义：保留 `style_library` 与 `TextStyleAdapter` 的外部 preset / 参数控制
-- 配置：通常仍使用 `SOVITS_CONDITION_MODE=none`
-- 重点：比较只有外部控制时的表现
-
-### 2.3 `internal_film`
-
-- 含义：启用 `TextStyleEncoder -> style_emb -> pre_decoder FiLM`
-- 配置：`SOVITS_CONDITION_MODE=internal_film`
-- 入口：`backend/app/models_svc/inference_conditioned.py`
-
-## 3. film_strength 对比建议
-
-建议预留三档：
-
-- `0.05`
-- `0.10`
-- `0.15`
-
-当前状态：
-
-- 已完成 `0.10` 的真实 smoke
-- `0.05 / 0.15` 为后续实验配置，尚未形成正式对比结论
-
-## 4. 最新 smoke 对照
-
-### 4.1 输入音频
-
-- 输入类型：本地短人声片段
-- 采样率：`44100 Hz`
-- 时长：`8.18s`
-- 可读性：`soundfile` 可读
-- 数值检查：无 `NaN/Inf`
-
-### 4.2 baseline `none`
-
-- 输出：有效 wav
-- 采样率：`44100 Hz`
-- 时长：`8.18s`
-- `soundfile`：可读
-- `NaN/Inf`：无
-- 推理入口：原始 `inference_main.py`
-- `executed_internal_film=false`
-
-### 4.3 `internal_film`
-
-- 输出：有效 wav
-- 采样率：`44100 Hz`
-- 时长：`8.18s`
-- `soundfile`：可读
-- `NaN/Inf`：无
-- `style_embedding.pt`：存在
-- `conditioning_report.json`：存在
-- `executed_internal_film=true`
-- 注入目标：`pre_decoder`
-
-## 5. 建议记录字段
-
-每组实验建议至少记录：
-
-- 输入音频路径
-- `style_prompt`
-- 输出音频路径
-- `condition_mode`
-- `film_strength`
-- `film_target`
-- `injection_target`
-- 是否成功生成有效 wav
-- `soundfile` 可读性
-- 采样率
-- 时长
-- 是否有 `NaN/Inf`
-- 主观听感备注
-- 可选客观指标
-
-## 6. 建议保留的证据文件
-
-```text
-runtime/debug/<task_id>/
-  style_embedding.pt
-  style_embedding.json
-  conditioning_report.json
-  sovits_command.txt
-  sovits_debug.json
-  converted.wav
+```bash
+python scripts/run_film_strength_ablation.py \
+  --dry-run \
+  --input /path/to/vocals.wav \
+  --prompt "温柔、明亮、流行感更强的女声风格" \
+  --strengths 0 0.05 0.10 0.15 \
+  --preset final_primary
 ```
 
-其中，论文和答辩阶段最关键的证据是：
+输出：
 
-- `conditioning_report.json` 中的 `executed_internal_film=true`
-- `sovits_command.txt` 中带有：
-  - `--style-emb-path`
-  - `--condition-mode internal_film`
-  - `--film-strength`
+- `runtime/eval_reports/film_strength_ablation.json`
+- `runtime/eval_reports/film_strength_ablation.md`
 
-## 7. 当前可得结论
+当前口径：
 
-当前可以成立的结论：
+- 已补齐多档实验配置、字段记录和 dry-run 报告
+- 若没有真实批量推理样本，只能说“实验框架已补齐”
 
-- 文本条件内部注入机制已经在真实 GPU 环境中接入并跑通
-- baseline `none` 与 `internal_film` 都可生成有效 wav
-- `internal_film` 路径可以写出完整调试证据
+## B. Condition Mode Ablation
 
-当前还不能直接成立的结论：
+实验组：
 
-- 文本提示词已经实现强语义级风格控制
-- `internal_film` 一定优于 `none`
-- 当前系统已经完成充分的主观效果验证
+1. `none`
+2. `external_preset`
+3. `internal_film`
+4. `external_preset + internal_film` 可选
 
-## 8. 后续实验建议
+脚本：
 
-后续可在不扩大系统功能的前提下继续补充：
+```bash
+python scripts/run_condition_mode_ablation.py \
+  --dry-run \
+  --input /path/to/vocals.wav \
+  --prompt "温柔、明亮、流行感更强的女声风格" \
+  --preset final_primary
+```
 
-1. `0.05 / 0.10 / 0.15` 的 `film_strength` 对照
-2. 相同输入音频下的人工听评表
-3. 不同 preset 与相同 prompt 的对照
-4. `external_preset` 与 `internal_film` 的分离对比
+输出：
+
+- `runtime/eval_reports/condition_mode_ablation.json`
+- `runtime/eval_reports/condition_mode_ablation.md`
+
+当前口径：
+
+- `external_preset` 若只是逻辑层外部预设、未绑定真实独立专用模型，不能伪装成“真实专模效果”
+- 显式 `final_primary` 手动 override 时，需要记录 `requested_model_preset_id / effective_model_preset_id / preset_fallback_used`
+
+## C. 当前已成立与未成立结论
+
+可以成立：
+
+- internal FiLM 工程链路已打通并通过真实 smoke
+- ablation 脚本与导出报告框架已补齐
+
+还不能成立：
+
+- `internal_film` 一定显著优于 `baseline none`
+- 所有 prompt 都能稳定产生明显风格差异
+- `external_preset` 已经等价于真实专用模型效果

@@ -2,136 +2,158 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
+from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TASK_STORE_DIR = PROJECT_ROOT / "runtime" / "task_store" / "tasks"
-OUTPUT_PATH = PROJECT_ROOT / "runtime" / "eval_reports" / "latest_subjective_eval_pack.md"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "runtime" / "eval_reports" / "subjective_eval_pack"
+DEFAULT_MANIFEST = PROJECT_ROOT / "runtime" / "eval_reports" / "subjective_eval_manifest.json"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Export a subjective listening-evaluation pack without copying runtime audio into git.")
+    parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST, help="Input or output manifest path")
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR, help="Pack directory")
+    parser.add_argument("--init-template", action="store_true", help="Write an empty/example manifest and CSV templates")
+    return parser.parse_args()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Export a subjective evaluation markdown pack without copying audio files.")
-    parser.add_argument("--limit", type=int, default=3, help="How many latest real tasks to include")
-    parser.add_argument("--output", type=Path, default=OUTPUT_PATH, help="Markdown output path")
-    args = parser.parse_args()
+    args = parse_args()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    tasks = load_latest_real_tasks(limit=max(args.limit, 1))
-    if not tasks:
-        print("[subjective-pack] no succeeded real tasks found under runtime/task_store/tasks")
-        return 0
+    if args.init_template or not args.manifest.exists():
+        manifest = example_manifest()
+        write_manifest(args.manifest, manifest)
+    else:
+        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(render_markdown(tasks), encoding="utf-8")
-    print(f"[subjective-pack] wrote subjective evaluation pack to {args.output}")
+    samples = manifest.get("samples") or []
+    score_template_path = args.output_dir / "subjective_eval_scores.template.csv"
+    pair_template_path = args.output_dir / "subjective_eval_pairwise.template.csv"
+    readme_path = args.output_dir / "README.md"
+
+    write_score_template(score_template_path)
+    write_pairwise_template(pair_template_path)
+    readme_path.write_text(render_pack_markdown(samples, args.manifest, score_template_path, pair_template_path), encoding="utf-8")
+
+    print(f"[subjective-pack] manifest: {args.manifest}")
+    print(f"[subjective-pack] score template: {score_template_path}")
+    print(f"[subjective-pack] pairwise template: {pair_template_path}")
     return 0
 
 
-def load_latest_real_tasks(limit: int) -> list[dict[str, object]]:
-    if not TASK_STORE_DIR.exists():
-        return []
-
-    records: list[dict[str, object]] = []
-    for path in sorted(TASK_STORE_DIR.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        if payload.get("status") != "succeeded":
-            continue
-        engine_details = payload.get("engine_details") or {}
-        inference_mode = payload.get("inference_mode") or engine_details.get("inference_mode")
-        if inference_mode != "real":
-            continue
-        task_id = str(payload.get("task_id") or path.stem)
-        debug_dir = PROJECT_ROOT / "runtime" / "debug" / task_id
-        prompt_payload = read_json(debug_dir / "prompt.json")
-        audio_quality_summary = engine_details.get("audio_quality_summary") or {}
-        records.append(
+def example_manifest() -> dict[str, Any]:
+    return {
+        "status": "template",
+        "notes": [
+            "Fill real audio paths only under runtime/eval_samples or runtime/debug; do not commit them.",
+            "Keep subjective scores blank until real human listeners complete the form.",
+        ],
+        "samples": [
             {
-                "task_id": task_id,
-                "prompt": prompt_payload.get("prompt_text") or "",
-                "input_path": str(debug_dir / "input.wav"),
-                "vocals_path": str(debug_dir / "vocals.wav"),
-                "output_path": str(payload.get("output_path") or debug_dir / "converted.wav"),
-                "gpu_telemetry_path": str(engine_details.get("gpu_telemetry_debug_path") or debug_dir / "gpu_telemetry.txt"),
-                "audio_quality_summary": audio_quality_summary,
+                "sample_id": "case_001",
+                "prompt": "温柔、明亮、流行感更强的女声风格",
+                "baseline_none_path": "/abs/path/to/converted_none.wav",
+                "internal_film_path": "/abs/path/to/converted_internal_film.wav",
+                "condition_a_label": "baseline none",
+                "condition_b_label": "internal_film strength=0.10",
+                "notes": "待人工填写",
             }
+        ],
+    }
+
+
+def write_manifest(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def write_score_template(path: Path) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "listener_id",
+                "sample_id",
+                "prompt",
+                "condition",
+                "naturalness_score",
+                "clarity_score",
+                "content_preservation_score",
+                "prompt_match_score",
+                "style_change_score",
+                "overall_preference",
+                "comments",
+            ]
         )
-        if len(records) >= limit:
-            break
-    return records
 
 
-def read_json(path: Path) -> dict[str, object]:
-    if not path.exists():
-        return {}
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return {}
-    return payload if isinstance(payload, dict) else {}
+def write_pairwise_template(path: Path) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "listener_id",
+                "sample_id",
+                "prompt",
+                "better_prompt_match",
+                "better_naturalness",
+                "style_difference_audible",
+                "has_distortion_or_artifacts",
+                "comments",
+            ]
+        )
 
 
-def render_markdown(tasks: list[dict[str, object]]) -> str:
+def render_pack_markdown(
+    samples: list[dict[str, Any]],
+    manifest_path: Path,
+    score_template_path: Path,
+    pair_template_path: Path,
+) -> str:
     lines = [
         "# Subjective Evaluation Pack",
         "",
-        "以下内容仅记录 demo 输入/输出与 debug 路径，不复制音频大文件。",
+        "本目录只导出听评所需的样例清单和表格模板，不复制音频、不提交 runtime 大文件。",
         "",
-        "## Task Paths",
+        f"- manifest: `{manifest_path}`",
+        f"- score template: `{score_template_path}`",
+        f"- pairwise template: `{pair_template_path}`",
         "",
-        "| task_id | prompt | input_path | vocals_path | output_path | gpu_telemetry_path |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "## Sample List",
+        "",
+        "| sample_id | prompt | condition A | condition B | baseline_none_path | internal_film_path | notes |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for task in tasks:
+    if not samples:
+        lines.append("| `pending` | `pending` |  |  |  |  | 模板已生成，待人工填写 |")
+    for sample in samples:
         lines.append(
-            "| `{task_id}` | {prompt} | `{input_path}` | `{vocals_path}` | `{output_path}` | `{gpu_telemetry_path}` |".format(
-                task_id=task["task_id"],
-                prompt=task["prompt"],
-                input_path=task["input_path"],
-                vocals_path=task["vocals_path"],
-                output_path=task["output_path"],
-                gpu_telemetry_path=task["gpu_telemetry_path"],
+            "| `{sample_id}` | {prompt} | `{condition_a_label}` | `{condition_b_label}` | `{baseline_none_path}` | `{internal_film_path}` | {notes} |".format(
+                sample_id=sample.get("sample_id", ""),
+                prompt=sample.get("prompt", ""),
+                condition_a_label=sample.get("condition_a_label", "baseline none"),
+                condition_b_label=sample.get("condition_b_label", "internal_film strength=0.10"),
+                baseline_none_path=sample.get("baseline_none_path", ""),
+                internal_film_path=sample.get("internal_film_path", ""),
+                notes=sample.get("notes", "待人工填写"),
             )
         )
-
     lines.extend(
         [
             "",
-            "## Audio Quality Summary",
+            "## Listener Instructions",
             "",
-            "| task_id | duration_consistency | low_energy_ratio | possible_dropouts |",
-            "| --- | ---: | ---: | --- |",
+            "- 先听完整 A/B 两个版本，再填写各条件的 1-5 分。",
+            "- 不确定时可以在 `comments` 中记录“风格差异不明显”。",
+            "- 没有真实人工评分时，不要补填任何分数。",
+            "",
         ]
     )
-    for task in tasks:
-        summary = task.get("audio_quality_summary") or {}
-        lines.append(
-            "| `{task_id}` | `{duration_consistency}` | `{low_energy_ratio}` | `{possible_dropouts}` |".format(
-                task_id=task["task_id"],
-                duration_consistency=summary.get("duration_consistency", "n/a"),
-                low_energy_ratio=summary.get("low_energy_ratio", "n/a"),
-                possible_dropouts=summary.get("possible_dropouts", "n/a"),
-            )
-        )
-
-    lines.extend(
-        [
-            "",
-            "## Subjective Evaluation Table",
-            "",
-            "| task_id | prompt | 风格符合度 1-5 | 自然度 1-5 | 歌词可懂度 1-5 | 原旋律保持 1-5 | 总体满意度 1-5 | 备注 |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |",
-        ]
-    )
-    for task in tasks:
-        lines.append(
-            "| `{task_id}` | {prompt} |  |  |  |  |  |  |".format(
-                task_id=task["task_id"],
-                prompt=task["prompt"],
-            )
-        )
-
-    lines.append("")
     return "\n".join(lines)
 
 

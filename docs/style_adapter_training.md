@@ -1,73 +1,109 @@
-# TextStyleAdapter 训练说明
+# Style Adapter Training
 
-## 当前状态
+## 当前定位
 
-当前仓库中的 `TextStyleAdapter v1` 是旁路参数控制原型：
+当前 BS 主链路已经实现：
 
-- 输入：提示词 embedding、`style_strength`、`selected_style`
-- 输出：`model_preset_id`、`transpose`、`brightness`、`power`、`breathiness`、`youthfulness`
+- `style_prompt -> style_emb -> So-VITS-SVC internal_film`
+- 真实 `internal_film` smoke 可执行
+- `conditioning_report.json` 可证明 `executed_internal_film=true`
 
-它还不是 So-VITS-SVC 网络内部的端到端神经注入模块。
+但这不等于“强文本风格控制模型已训练完成”。
 
-## 数据准备
+当前阶段更准确的口径是：
 
-在 `data/style_adapter_pairs/metadata.jsonl` 中按如下 schema 准备样本：
+- 已实现文本条件注入机制
+- 已补齐 lightweight adapter / deterministic fallback encoder / small-scale dry-run 训练入口
+- 强文本风格控制仍需要更大规模、带风格标注的数据继续训练
+
+## 数据组织格式
+
+推荐元数据文件：`data/style_adapter_pairs/metadata.jsonl`
+
+每行至少包含：
 
 ```json
 {
   "id": "sample_001",
-  "audio_path": "audio/sample_001.wav",
-  "prompt": "清亮、少年感、男声",
-  "style_tags": ["bright", "youth", "male"],
-  "model_preset_id": "final_primary",
-  "transpose": 0,
-  "style_strength": 0.8,
-  "notes": ""
+  "input_audio_path": "runtime/eval_samples/input/sample_001.wav",
+  "target_audio_path": "runtime/eval_samples/target/sample_001.wav",
+  "output_audio_path": "runtime/eval_samples/output/sample_001.wav",
+  "style_prompt": "清亮、少年感、流行男声",
+  "style_label": "bright,youth,male",
+  "singer": "lain",
+  "speaker": "lain",
+  "split": "train",
+  "notes": "small-sample engineering validation only"
 }
 ```
 
-不要提交真实大音频文件到仓库。
+说明：
 
-## 构建 embedding 数据
+- `target_audio_path` 与 `output_audio_path` 至少提供一个
+- `style_prompt` 是训练和 dry-run 的核心字段
+- `style_label` 用于构造 lightweight adapter 的目标控制标签
+- `singer` / `speaker` 当前主要作为元数据与后续分层采样字段
 
-```bash
-cd /home/featurize/work/BS
-python scripts/build_style_adapter_dataset.py
-```
-
-输出：
-
-- `data/style_adapter_pairs/prepared/embeddings.npy`
-- `data/style_adapter_pairs/prepared/records.jsonl`
-
-## 训练最小 MLP 骨架
+## 数据准备脚本
 
 ```bash
 cd /home/featurize/work/BS
-python scripts/train_text_style_adapter.py
+python scripts/build_style_adapter_dataset.py \
+  --metadata data/style_adapter_pairs/metadata.jsonl \
+  --output-dir data/style_adapter_pairs/prepared
 ```
 
-输出：
+如只想检查入口是否可用：
 
-- `runtime/style_adapter/text_style_adapter_v1.pt`
-- `runtime/style_adapter/training_summary.json`
+```bash
+python scripts/build_style_adapter_dataset.py \
+  --metadata data/style_adapter_pairs/metadata.jsonl \
+  --dry-run
+```
 
-## 评估
+## 训练入口
 
 ```bash
 cd /home/featurize/work/BS
-python scripts/eval_text_style_adapter.py
+python scripts/train_text_style_adapter.py \
+  --metadata data/style_adapter_pairs/metadata.jsonl \
+  --output runtime/style_adapter/text_style_adapter_v1.pt \
+  --epochs 40 \
+  --batch-size 8 \
+  --style-dim 256 \
+  --device cpu
 ```
 
-当前 eval 会输出：
+如当前只做工程验证，不声明已完成大规模训练：
 
-- `tag accuracy`
-- `mse for numeric controls`
-- `sample predictions`
+```bash
+python scripts/train_text_style_adapter.py \
+  --dry-run \
+  --metadata data/style_adapter_pairs/metadata.jsonl \
+  --output runtime/style_adapter/text_style_adapter_v1.pt \
+  --report-output runtime/eval_reports/text_style_adapter_dry_run.json
+```
+
+`--dry-run` 会验证：
+
+- 元数据读取
+- prompt embedding 生成
+- 输出路径与日志路径
+- 训练入口参数
+- 当前样本数是否足以进入真实训练
+
+## 当前结论边界
+
+- 可以说：训练入口、数据规范和 dry-run 验证已经补齐
+- 可以说：当前工程已经具备后续训练 `text_style_adapter_v1.pt` 的基础
+- 不能说：已经完成基于大规模风格标注数据的强文本风格控制训练
+- 不能说：现有 small-scale dry-run 已经证明文本提示词可稳定强控制歌声风格
 
 ## 后续工作
 
-- 收集更稳定的提示词-风格配对数据
-- 训练真正的 Adapter 参数网络
-- 将 Adapter 输出的 Bias / Scale 注入 So-VITS-SVC 中间层
-- 扩展多风格模型 preset 与更细粒度控制参数
+后续如果补充更多标注样本，可以继续：
+
+1. 扩大 prompt-style pair 数据规模
+2. 在更稳定的 train/val/test 划分下训练 `text_style_adapter_v1.pt`
+3. 比较 external adapter 与 internal FiLM 的分工边界
+4. 结合主观听评验证 prompt-control 是否真的可感知
