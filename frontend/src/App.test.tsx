@@ -578,7 +578,9 @@ describe('App demo workspace', () => {
     await waitFor(() => {
       expect(screen.getByText('当前提示词匹配专用风格 preset，但该 preset 尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。')).toBeInTheDocument()
     })
-    expect(screen.getByText('本次输出来自回退后的实际模型，不能证明请求的模型预设已接入。')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByText('本次输出来自回退后的实际模型，不能证明请求的模型预设已接入。')).toBeInTheDocument()
+    })
     expect(screen.getAllByText('final_male_youth').length).toBeGreaterThan(0)
     expect(screen.getAllByText('final_primary').length).toBeGreaterThan(0)
   })
@@ -615,6 +617,7 @@ describe('App demo workspace', () => {
             stage: 'completed',
             progress: 100,
             message: '转换完成',
+            result_url: '/api/v1/tasks/task-style-evidence/result',
             result_metadata: {
               inference_mode: 'real',
               model_preset_id: 'final_primary',
@@ -655,16 +658,20 @@ describe('App demo workspace', () => {
       await flush()
     })
 
-    expect(mockedAxios.post).toHaveBeenCalledWith(
-      '/api/v1/style-analysis/compare',
-      expect.objectContaining({
-        input_path: '/repo/backend/app/data/uploads/vocals-1/vocals.wav',
-        output_path: '/repo/runtime/debug/task-style-evidence/converted.wav',
-        prompt_text: '清亮、少年感',
-        model_preset_id: 'final_primary',
-      }),
-    )
-    expect(screen.getByText('正在分析转换前后风格证据...')).toBeInTheDocument()
+    await waitFor(() => {
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        '/api/v1/style-analysis/compare',
+        expect.objectContaining({
+          input_path: '/repo/backend/app/data/uploads/vocals-1/vocals.wav',
+          output_path: '/repo/runtime/debug/task-style-evidence/converted.wav',
+          prompt_text: '清亮、少年感',
+          model_preset_id: 'final_primary',
+        }),
+      )
+    })
+    await waitFor(() => {
+      expect(screen.getByText('正在分析转换前后风格证据...')).toBeInTheDocument()
+    })
 
     await act(async () => {
       resolveCompare?.({ data: buildStyleEvidenceResponse() })
@@ -712,6 +719,7 @@ describe('App demo workspace', () => {
             stage: 'completed',
             progress: 100,
             message: '转换完成',
+            result_url: '/api/v1/tasks/task-style-fail/result',
             result_metadata: {
               inference_mode: 'real',
               model_preset_id: 'final_primary',
@@ -751,6 +759,17 @@ describe('App demo workspace', () => {
       await flush()
     })
 
+    await waitFor(() => {
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        '/api/v1/style-analysis/compare',
+        expect.objectContaining({
+          input_path: '/repo/backend/app/data/uploads/vocals-1/vocals.wav',
+          output_path: '/repo/runtime/debug/task-style-fail/converted.wav',
+          prompt_text: '清亮、少年感',
+          model_preset_id: 'final_primary',
+        }),
+      )
+    })
     await waitFor(() => {
       expect(screen.getByText('风格证据分析失败，但转换结果仍可播放。')).toBeInTheDocument()
     })

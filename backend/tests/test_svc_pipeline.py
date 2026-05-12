@@ -838,6 +838,7 @@ def test_sovits_real_mode_invalid_audio_returns_structured_error_without_subproc
 
 def test_sovits_real_mode_subprocess_failure_marks_task_failed_and_writes_error_json(mocker, tmp_path, monkeypatch):
     files = _prepare_runtime_files(tmp_path)
+    _prepare_valid_sovits_assets(files, speaker="speaker_a")
     runtime_dir = tmp_path / "runtime"
     monkeypatch.setenv("SOVITS_MOCK", "false")
     monkeypatch.setenv("SOVITS_REPO_DIR", str(files["repo_dir"]))

@@ -343,12 +343,44 @@ export interface ModelPresetCollection {
   presets?: ModelPresetStatus[]
 }
 
+export interface SovitsRuntimeStatus {
+  mock?: boolean
+  preset?: string | null
+  model_exists?: boolean
+  config_exists?: boolean
+  model_basename?: string | null
+  config_basename?: string | null
+  speaker?: string | null
+  device?: string | null
+  condition_mode?: string | null
+  conditioned_infer_exists?: boolean
+  called_conditioned_inference?: boolean
+  style_dim?: number | null
+  film_strength?: number | null
+  film_target?: string | null
+  style_emb_format?: string | null
+  speech_encoder?: string | null
+  f0_predictor?: string | null
+}
+
+export interface TextConditioningStatus {
+  enabled?: boolean
+  style_dim?: number | null
+  film_strength?: number | null
+  film_target?: string | null
+  style_emb_format?: string | null
+  encoder_status?: string | null
+  encoder_type?: string | null
+}
+
 export interface SystemHealthResponse {
   ok?: boolean
   app_status?: string
   mock_mode?: boolean
   task_backend_mode?: string
   svc_model_presets?: ModelPresetCollection
+  sovits?: SovitsRuntimeStatus
+  text_conditioning?: TextConditioningStatus
   timestamp?: string
 }
 
@@ -366,6 +398,9 @@ export interface SovitsCheckResponse {
   model_preset_id?: string
   model_display_name?: string
   svc_model_presets?: ModelPresetCollection
+  checks?: Array<Record<string, unknown>>
+  sovits?: SovitsRuntimeStatus
+  text_conditioning?: TextConditioningStatus
 }
 
 export const STYLE_PRESETS = [

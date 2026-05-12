@@ -22,9 +22,7 @@ except ModuleNotFoundError:  # pragma: no cover - handled at runtime
 
 
 APP_DIR = Path(__file__).resolve().parents[1]
-TEXT_STYLE_CONFIG_PATH = Path(
-    os.environ.get("TEXT_STYLE_CONFIG_PATH", str(APP_DIR / "config" / "text_style_config.json"))
-)
+TEXT_STYLE_CONFIG_PATH = Path(APP_DIR / "config" / "text_style_config.json")
 
 FALLBACK_ENCODER_TYPE = "deterministic_style_hash_v1"
 
@@ -100,9 +98,10 @@ def load_text_style_config() -> dict[str, Any]:
         "cache_dir": "/home/featurize/work/BS/local_models/text-encoders",
         "enabled": True,
     }
-    if not TEXT_STYLE_CONFIG_PATH.exists():
+    config_path = Path(os.environ.get("TEXT_STYLE_CONFIG_PATH", str(TEXT_STYLE_CONFIG_PATH)))
+    if not config_path.exists():
         return defaults
-    payload = json.loads(TEXT_STYLE_CONFIG_PATH.read_text(encoding="utf-8"))
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("text_style_config.json root must be an object")
     return {**defaults, **payload}
@@ -137,7 +136,7 @@ class TextStyleEncoder:
             raise TextStyleEncoderError(
                 "TEXT_ENCODER_DISABLED",
                 "Text style encoder is disabled by configuration",
-                {"config_path": str(TEXT_STYLE_CONFIG_PATH)},
+                {"config_path": str(Path(os.environ.get("TEXT_STYLE_CONFIG_PATH", str(TEXT_STYLE_CONFIG_PATH))))},
             )
 
         normalized_prompt = _normalize_prompt(prompt_text)
@@ -265,7 +264,7 @@ class TextStyleEncoder:
             self._model_load_error = TextStyleEncoderError(
                 "TEXT_ENCODER_MODEL_NOT_FOUND",
                 "Text encoder model path is incomplete; using deterministic fallback encoder",
-                {"config_path": str(TEXT_STYLE_CONFIG_PATH)},
+                {"config_path": str(Path(os.environ.get("TEXT_STYLE_CONFIG_PATH", str(TEXT_STYLE_CONFIG_PATH))))},
             )
             return None
         cache_dir_path = Path(cache_dir)

@@ -115,7 +115,12 @@ function App() {
   const isUploading = status === AppStatus.UPLOADING
   const isConverting = status === AppStatus.CONVERTING
   const promptError = !promptText.trim() ? '请先输入目标风格描述。' : null
-  const mockMode = typeof sovitsCheck?.SOVITS_MOCK === 'boolean' ? Boolean(sovitsCheck.SOVITS_MOCK) : Boolean(systemHealth?.mock_mode)
+  const mockMode =
+    typeof systemHealth?.sovits?.mock === 'boolean'
+      ? Boolean(systemHealth.sovits.mock)
+      : typeof sovitsCheck?.SOVITS_MOCK === 'boolean'
+        ? Boolean(sovitsCheck.SOVITS_MOCK)
+        : Boolean(systemHealth?.mock_mode)
   const gpuStatus = getGpuStatus(sovitsCheck)
   const canStartConversion = Boolean(vocalsId) && Boolean(promptText.trim()) && !isUploading && !isConverting
   const taskProgress = Math.max(0, Math.min(100, Number(taskSnapshot?.progress ?? 0)))
@@ -144,6 +149,12 @@ function App() {
   const effectiveModelPresetId =
     currentResultMetadata?.effective_model_preset_id ?? currentResultMetadata?.model_preset_id ?? modelPresetId
   const presetFallbackUsed = Boolean(currentResultMetadata?.preset_fallback_used)
+  const backendConditionMode =
+    currentResultMetadata?.condition_mode ?? systemHealth?.sovits?.condition_mode ?? sovitsCheck?.sovits?.condition_mode ?? 'internal_film'
+  const backendFilmStrength =
+    currentResultMetadata?.film_strength ?? systemHealth?.text_conditioning?.film_strength ?? sovitsCheck?.text_conditioning?.film_strength ?? null
+  const backendConditionedInferExists =
+    systemHealth?.sovits?.conditioned_infer_exists ?? sovitsCheck?.sovits?.conditioned_infer_exists ?? null
   const activePresetStatusLabel = activePreset?.ready ? '已配置' : '未绑定模型'
   const unconfiguredPresetNotice = !activePresetConfigured
     ? allowPresetFallback
@@ -315,6 +326,9 @@ function App() {
       setTaskStatusMsg(typeof data.message === 'string' ? data.message : '正在处理…')
       setSelectedStyle(data.selected_style ?? null)
       if (data.status === 'succeeded') {
+        if (!data.result_url) {
+          throw buildTaskFailureError(data, '后端把任务标记为成功，但没有返回 result_url。')
+        }
         const resultResponse = await axios.get(`/api/v1/tasks/${taskId}/result`, { responseType: 'blob' })
         return {
           blob: resultResponse.data as Blob,
@@ -322,13 +336,7 @@ function App() {
         }
       }
       if (data.status === 'failed') {
-        throw new Error(
-          typeof data.error === 'string'
-            ? data.error
-            : typeof (data.error as { message?: string } | null)?.message === 'string'
-              ? String((data.error as { message?: string }).message)
-              : data.message || '转换失败',
-        )
+        throw buildTaskFailureError(data)
       }
       await new Promise((resolve) => setTimeout(resolve, 1000))
     }
@@ -395,7 +403,7 @@ function App() {
       completeWithBlob(payload)
     } catch (err: unknown) {
       setStatus(AppStatus.ERROR)
-      setErrorMsg(readAxiosMessage(err, 'SVC 转换失败。'))
+      setErrorMsg(formatConversionError(err, 'SVC 转换失败。'))
     }
   }
 
@@ -564,13 +572,13 @@ function App() {
               />
               <StatusBadge
                 label={
-                  (currentResultMetadata?.condition_mode ?? 'internal_film') === 'internal_film'
+                  backendConditionMode === 'internal_film'
                     ? currentResultMetadata?.executed_internal_film
                       ? 'Internal FiLM 已执行'
                       : 'Internal FiLM 已接入'
                     : '内部注入已关闭'
                 }
-                tone={(currentResultMetadata?.condition_mode ?? 'internal_film') === 'internal_film' ? 'success' : 'neutral'}
+                tone={backendConditionMode === 'internal_film' ? 'success' : 'neutral'}
               />
             </div>
           </section>
@@ -851,7 +859,7 @@ function App() {
                     <MetricItem label="发生回退" value={formatBool(presetFallbackUsed)} />
                     <MetricItem label="f0_method" value={String(effectiveF0Method ?? 'system_default')} />
                     <MetricItem label="auto_predict_f0" value={formatBool(effectiveAutoPredictF0)} />
-                    <MetricItem label="condition_mode" value={String(currentResultMetadata?.condition_mode ?? 'internal_film')} />
+                    <MetricItem label="condition_mode" value={String(currentResultMetadata?.condition_mode ?? backendConditionMode)} />
                   </div>
 
                   <div className="config-summary">
@@ -868,13 +876,20 @@ function App() {
                     <Notice tone="success">当前目标为真实本地 So-VITS-SVC 推理，默认模型为 final_primary/lain。</Notice>
                   )}
 
+                  {backendConditionedInferExists === false && (
+                    <Notice tone="error">当前后端缺少 conditioned internal FiLM 推理脚本，真实文本风格注入不会成功。</Notice>
+                  )}
+
                   {unconfiguredPresetNotice && <Notice tone="warning">{unconfiguredPresetNotice}</Notice>}
 
                   {presetFallbackUsed && (
-                    <Notice tone="warning">
-                      {currentResultMetadata?.preset_fallback_reason ||
-                        '当前文本提示词匹配到专用风格模型预设，但该模型预设尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。'}
-                    </Notice>
+                    <>
+                      <Notice tone="warning">
+                        {currentResultMetadata?.preset_fallback_reason ||
+                          '当前文本提示词匹配到专用风格模型预设，但该模型预设尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。'}
+                      </Notice>
+                      <Notice tone="warning">本次输出来自回退后的实际模型，不能证明请求的模型预设已接入。</Notice>
+                    </>
                   )}
 
                   {selectedStyleNeedsDedicatedPreset && !selectedStylePresetReady && (
@@ -891,8 +906,8 @@ function App() {
                     当前转换效果主要受目标模型、输入音频质量、F0 提取质量以及人声分离质量影响。
                   </Notice>
 
-                  <Notice tone={currentResultMetadata?.condition_mode === 'internal_film' ? 'success' : 'warning'}>
-                    {currentResultMetadata?.condition_mode === 'internal_film'
+                  <Notice tone={backendConditionMode === 'internal_film' ? 'success' : 'warning'}>
+                    {backendConditionMode === 'internal_film'
                       ? '默认真实链路会把文本提示词编码为 style embedding，并在 So-VITS-SVC decoder 前执行内部 Bias/Scale 调制。'
                       : '当前后端已关闭 internal FiLM，真实推理会回退到原始 So-VITS-SVC 路径。'}
                   </Notice>
@@ -906,6 +921,25 @@ function App() {
                   <div className="task-message">{taskSnapshot?.message || taskStatusMsg || '等待上传音频并输入提示词。'}</div>
 
                   {errorMsg && <div className="error-banner">{errorMsg}</div>}
+
+                  {result?.convertedUrl && (
+                    <div className="detail-section">
+                      <div className="field-label">转换结果摘要</div>
+                      <div className="metric-grid compact">
+                        <MetricItem label="condition_mode" value={String(currentResultMetadata?.condition_mode ?? backendConditionMode)} />
+                        <MetricItem
+                          label="style_prompt"
+                          value={String(currentResultMetadata?.style_prompt ?? (promptText || '暂无'))}
+                        />
+                        <MetricItem label="film_strength" value={formatNullableNumber(currentResultMetadata?.film_strength ?? backendFilmStrength)} />
+                        <MetricItem label="executed_internal_film" value={formatBool(currentResultMetadata?.executed_internal_film)} />
+                        <MetricItem
+                          label="conditioning_report"
+                          value={String(currentResultMetadata?.conditioning_report_path ?? '未生成')}
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <button type="button" className="primary-button" onClick={handleSvcConvert} disabled={!canStartConversion}>
                     {isConverting ? '转换中…' : status === AppStatus.COMPLETED ? '再次转换' : '开始转换'}
@@ -1559,6 +1593,52 @@ function readAxiosMessage(error: unknown, fallback: string) {
     return message
   }
   return fallback
+}
+
+function buildTaskFailureError(taskData: TaskResponse, fallback?: string) {
+  const error = new Error(formatTaskFailureMessage(taskData, fallback)) as Error & { taskData?: TaskResponse }
+  error.taskData = taskData
+  return error
+}
+
+function formatTaskFailureMessage(taskData: TaskResponse, fallback = '转换失败') {
+  const errorPayload = objectOrNull(taskData.error)
+  const errorCode = stringOrNull(errorPayload?.code)
+  const errorMessage = stringOrNull(errorPayload?.message)
+  const details = objectOrNull(errorPayload?.details)
+  if (errorCode === 'SOVITS_MODEL_NOT_FOUND') {
+    return `模型权重缺失：${stringOrNull(details?.model_path) ?? taskData.model_path ?? '请检查 SOVITS_MODEL_PATH。'}`
+  }
+  if (errorCode === 'SOVITS_CONFIG_NOT_FOUND') {
+    return `模型 config 缺失：${stringOrNull(details?.config_path) ?? taskData.config_path ?? '请检查 SOVITS_CONFIG_PATH。'}`
+  }
+  if (errorCode === 'SOVITS_SPEAKER_NOT_IN_CONFIG') {
+    return `speaker 不存在：${stringOrNull(details?.speaker) ?? taskData.speaker ?? '当前 speaker'} 不在当前 config 的 speaker 列表中。`
+  }
+  if (errorCode === 'CONTENTVEC_PRETRAIN_NOT_FOUND') {
+    return `ContentVec / HuBERT 缺失：请补齐 checkpoint_best_legacy_500.pt，或配置 SOVITS_CONTENTVEC_PATH。`
+  }
+  if (errorCode === 'RMVPE_MODEL_NOT_FOUND') {
+    return 'RMVPE 模型缺失：请补齐 rmvpe.pt，或配置 SOVITS_RMVPE_MODEL_PATH。'
+  }
+  if (errorCode === 'SOVITS_MOCK_ENABLED') {
+    return '当前后端仍处于 Mock 模式，不能用于真实 So-VITS-SVC 转换。'
+  }
+  if (errorCode === 'SOVITS_CONDITIONED_SCRIPT_NOT_FOUND') {
+    return 'internal_film 推理脚本缺失，当前后端无法执行真实内部注入。'
+  }
+  if (errorMessage) {
+    return errorMessage
+  }
+  return taskData.message || fallback
+}
+
+function formatConversionError(error: unknown, fallback: string) {
+  const taskData = (error as { taskData?: TaskResponse } | null)?.taskData
+  if (taskData) {
+    return formatTaskFailureMessage(taskData, fallback)
+  }
+  return readAxiosMessage(error, fallback)
 }
 
 function coerceBoolean(value: unknown) {

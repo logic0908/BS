@@ -15,7 +15,7 @@ from typing import Any
 
 import soundfile as sf
 
-from app.models_svc.sovits_assets import inspect_sovits_assets
+from app.models_svc.sovits_assets import ensure_repo_runtime_assets, inspect_sovits_assets
 from app.models_svc.svc_base import VoiceConversionEngine
 from app.services import svc_model_presets
 
@@ -549,9 +549,12 @@ class SoVitsSvcEngine(VoiceConversionEngine):
     def _rmvpe_supported(self) -> bool:
         if importlib.util.find_spec("rmvpe") is None:
             return False
+        ensure_repo_runtime_assets(self.repo_dir)
         candidate_paths = [
+            os.environ.get("SOVITS_RMVPE_MODEL_PATH", "").strip(),
             os.environ.get("RMVPE_MODEL_PATH", "").strip(),
             str(APP_DIR / "models" / "rmvpe" / "rmvpe.pt"),
+            str(Path(self.repo_dir) / "pretrain" / "rmvpe.pt"),
             str(Path(self.repo_dir) / "rmvpe.pt"),
             str(APP_DIR.parents[1] / "rmvpe.pt"),
         ]
@@ -883,12 +886,14 @@ class SoVitsSvcEngine(VoiceConversionEngine):
                 "So-VITS-SVC speaker is required",
                 {"speaker": runtime_config.speaker},
             )
+        ensure_repo_runtime_assets(runtime_config.repo_dir)
         asset_report = inspect_sovits_assets(
             repo_dir=runtime_config.repo_dir,
             infer_script=runtime_config.infer_script,
             model_path=runtime_config.model_path,
             config_path=runtime_config.config_path,
             speaker=runtime_config.speaker,
+            f0_method=runtime_config.f0_method,
         )
         validation_errors = asset_report.get("validation_errors", [])
         if validation_errors:

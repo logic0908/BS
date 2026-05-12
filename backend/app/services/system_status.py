@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.models_svc.model_readiness import collect_model_readiness
 from app.models_svc.sovits_assets import inspect_sovits_assets
 from app.models_svc.sovits_wrapper import SoVitsSvcEngine
 from app.services.svc_model_presets import collect_presets_status
@@ -115,17 +116,19 @@ def _frontend_build_info() -> dict[str, Any] | None:
 
 
 def collect_app_health() -> dict[str, Any]:
-    engine = SoVitsSvcEngine()
-    runtime_config = engine.resolve_runtime_config({})
+    readiness = collect_model_readiness(require_real_assets=False, skip_real_checks_if_mock=True)
+    runtime_config = readiness["runtime_config"]
     return {
         "ok": True,
         "app_status": "ok",
         "python_executable": sys.executable,
         "python_version": sys.version,
         "conda_env": os.environ.get("CONDA_DEFAULT_ENV", ""),
-        "mock_mode": runtime_config.mock_enabled,
+        "mock_mode": runtime_config["mock_enabled"],
         "task_backend_mode": "celery" if svc_task_service.use_celery() else "local",
         "svc_model_presets": collect_presets_status(),
+        "sovits": readiness["sovits"],
+        "text_conditioning": readiness["text_conditioning"],
         "frontend_build_info": _frontend_build_info(),
         "timestamp": _iso_timestamp(),
     }
@@ -150,6 +153,7 @@ def collect_sovits_check() -> dict[str, Any]:
         "stderr": "nvidia-smi not found in PATH",
     }
 
+    readiness = collect_model_readiness(require_real_assets=False, skip_real_checks_if_mock=True)
     return {
         "SOVITS_MOCK": runtime_config.mock_enabled,
         "SOVITS_REPO_DIR": runtime_config.repo_dir,
@@ -189,6 +193,9 @@ def collect_sovits_check() -> dict[str, Any]:
         "contentvec_required": asset_report["contentvec_required"],
         "contentvec_candidate_paths": asset_report["contentvec_candidate_paths"],
         "contentvec_found_paths": asset_report["contentvec_found_paths"],
+        "rmvpe_required": asset_report.get("rmvpe_required"),
+        "rmvpe_candidate_paths": asset_report.get("rmvpe_candidate_paths"),
+        "rmvpe_found_paths": asset_report.get("rmvpe_found_paths"),
         "validation_errors": asset_report["validation_errors"],
         "nvidia_smi": nvidia_smi,
         "dev_nvidia_devices": glob.glob("/dev/nvidia*"),
@@ -197,5 +204,8 @@ def collect_sovits_check() -> dict[str, Any]:
         "torch_cuda_version": torch_info.get("torch_cuda_version"),
         "torch_device_count": torch_info.get("torch_device_count"),
         "import_status": _check_imports(),
+        "checks": readiness["checks"],
+        "sovits": readiness["sovits"],
+        "text_conditioning": readiness["text_conditioning"],
         "timestamp": _iso_timestamp(),
     }

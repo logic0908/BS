@@ -77,22 +77,35 @@ def retrieve_style(
 
 def apply_runtime_defaults(preset: dict[str, Any], model_preset_id: str | None = None) -> dict[str, Any]:
     resolved = dict(preset)
-    preset_id = model_preset_id or str(resolved.get("model_preset_id") or "").strip() or None
+    explicit_model_preset_id = str(model_preset_id or "").strip()
+    preset_id = explicit_model_preset_id or str(resolved.get("model_preset_id") or "").strip() or None
     model_preset = svc_model_presets.resolve_preset(preset_id)
     model_metadata = model_preset.to_runtime_dict() if model_preset else {}
     model_status = model_preset.readiness() if model_preset else {}
-    for key, value in model_metadata.items():
-        resolved.setdefault(key, value)
-    resolved["model_preset_id"] = str(resolved.get("model_preset_id") or model_metadata.get("model_preset_id") or "")
-    resolved["model_display_name"] = str(resolved.get("model_display_name") or model_metadata.get("model_display_name") or "")
-    resolved["model_path"] = resolved.get("model_path") or model_metadata.get("model_path") or os.environ.get("SOVITS_MODEL_PATH", "")
-    resolved["config_path"] = resolved.get("config_path") or model_metadata.get("config_path") or os.environ.get("SOVITS_CONFIG_PATH", "")
-    resolved["speaker"] = resolved.get("speaker") or model_metadata.get("speaker") or os.environ.get("SOVITS_SPEAKER", "")
-    resolved["device"] = resolved.get("device") or model_metadata.get("device")
-    resolved["source_repo"] = resolved.get("source_repo") or model_metadata.get("source_repo", "")
-    resolved["license"] = resolved.get("license") or model_metadata.get("license", "")
-    resolved["model_path_basename"] = resolved.get("model_path_basename") or model_metadata.get("model_path_basename", "")
-    resolved["config_path_basename"] = resolved.get("config_path_basename") or model_metadata.get("config_path_basename", "")
+    if explicit_model_preset_id:
+        resolved["model_preset_id"] = str(model_metadata.get("model_preset_id") or explicit_model_preset_id)
+        resolved["model_display_name"] = str(model_metadata.get("model_display_name") or resolved.get("model_display_name") or "")
+        resolved["model_path"] = model_metadata.get("model_path") or resolved.get("model_path") or os.environ.get("SOVITS_MODEL_PATH", "")
+        resolved["config_path"] = model_metadata.get("config_path") or resolved.get("config_path") or os.environ.get("SOVITS_CONFIG_PATH", "")
+        resolved["speaker"] = model_metadata.get("speaker") or resolved.get("speaker") or os.environ.get("SOVITS_SPEAKER", "")
+        resolved["device"] = model_metadata.get("device") or resolved.get("device")
+        resolved["source_repo"] = model_metadata.get("source_repo") or resolved.get("source_repo") or ""
+        resolved["license"] = model_metadata.get("license") or resolved.get("license") or ""
+        resolved["model_path_basename"] = model_metadata.get("model_path_basename") or resolved.get("model_path_basename") or ""
+        resolved["config_path_basename"] = model_metadata.get("config_path_basename") or resolved.get("config_path_basename") or ""
+    else:
+        for key, value in model_metadata.items():
+            resolved.setdefault(key, value)
+        resolved["model_preset_id"] = str(resolved.get("model_preset_id") or model_metadata.get("model_preset_id") or "")
+        resolved["model_display_name"] = str(resolved.get("model_display_name") or model_metadata.get("model_display_name") or "")
+        resolved["model_path"] = resolved.get("model_path") or model_metadata.get("model_path") or os.environ.get("SOVITS_MODEL_PATH", "")
+        resolved["config_path"] = resolved.get("config_path") or model_metadata.get("config_path") or os.environ.get("SOVITS_CONFIG_PATH", "")
+        resolved["speaker"] = resolved.get("speaker") or model_metadata.get("speaker") or os.environ.get("SOVITS_SPEAKER", "")
+        resolved["device"] = resolved.get("device") or model_metadata.get("device")
+        resolved["source_repo"] = resolved.get("source_repo") or model_metadata.get("source_repo", "")
+        resolved["license"] = resolved.get("license") or model_metadata.get("license", "")
+        resolved["model_path_basename"] = resolved.get("model_path_basename") or model_metadata.get("model_path_basename", "")
+        resolved["config_path_basename"] = resolved.get("config_path_basename") or model_metadata.get("config_path_basename", "")
     resolved["style_tags"] = list(resolved.get("style_tags") or model_metadata.get("style_tags") or [])
     resolved["is_demo_quality"] = bool(resolved.get("is_demo_quality", model_metadata.get("is_demo_quality", False)))
     resolved["is_configured"] = bool(resolved.get("is_configured", model_metadata.get("is_configured", False)))

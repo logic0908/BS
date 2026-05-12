@@ -18,9 +18,7 @@ except ModuleNotFoundError:  # pragma: no cover - handled through fallback mode
 
 APP_DIR = Path(__file__).resolve().parents[1]
 PROJECT_ROOT = APP_DIR.parents[1]
-STYLE_ADAPTER_CONFIG_PATH = Path(
-    os.environ.get("STYLE_ADAPTER_CONFIG_PATH", str(APP_DIR / "config" / "style_adapter_config.json"))
-)
+STYLE_ADAPTER_CONFIG_PATH = Path(APP_DIR / "config" / "style_adapter_config.json")
 DEFAULT_CHECKPOINT_PATH = str(PROJECT_ROOT / "runtime" / "style_adapter" / "text_style_adapter_v1.pt")
 TRAINED_TARGET_KEYS = (
     "brightness",
@@ -127,8 +125,9 @@ def load_style_adapter_config() -> dict[str, Any]:
         "trainable": True,
     }
     payload: dict[str, Any] = {}
-    if STYLE_ADAPTER_CONFIG_PATH.exists():
-        loaded = json.loads(STYLE_ADAPTER_CONFIG_PATH.read_text(encoding="utf-8"))
+    config_path = Path(os.environ.get("STYLE_ADAPTER_CONFIG_PATH", str(STYLE_ADAPTER_CONFIG_PATH)))
+    if config_path.exists():
+        loaded = json.loads(config_path.read_text(encoding="utf-8"))
         if not isinstance(loaded, dict):
             raise ValueError("style_adapter_config.json root must be an object")
         payload.update(loaded)
