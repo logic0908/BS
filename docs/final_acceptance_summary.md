@@ -10,7 +10,7 @@
 ## 最新验证快照
 
 - 后端：`127 passed, 20 warnings`
-- 前端测试：`9 passed`
+- 前端测试：`5 passed`
 - 前端 build：成功
 - Node 提示：`20.16.0` 低于 Vite 推荐版本，但本次 build 仍成功
 - text style adapter dry-run：已生成 `runtime/eval_reports/text_style_adapter_dry_run.json`
@@ -47,7 +47,7 @@
 ## 当前限制
 
 - 不能声称“强文本风格控制模型已训练完成”
-- 不能声称“internal_film 已显著优于 baseline none”
+- 不能把当前结果写成“主观质量结论已经成立”
 - `external_preset` 若未绑定真实独立专用模型，不能表述成真实专模效果
 - 真实大规模听评和更多样本仍是后续工作
 - 当前客观指标显示的是可量化差异趋势，不等价于主观优劣结论

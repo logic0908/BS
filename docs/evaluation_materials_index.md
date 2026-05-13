@@ -34,3 +34,16 @@
 - [defense_claims.md](./defense_claims.md)
 - [final_acceptance_summary.md](./final_acceptance_summary.md)
 - [demo_screenshot_guide.md](./demo_screenshot_guide.md)
+
+## 当前前端展示状态
+
+- 主前端：React + Vite + TypeScript
+- 主页面：宽屏三栏压缩布局
+- 主页面已删除重复“转换前后音频对比”大卡片
+- 主显示字段中文化，英文原字段仅保留在折叠“字段说明”
+
+## 仍需人工补充
+
+- 主观听评真实打分
+- 论文截图筛选与排版
+- demo 视频录制（如答辩需要）

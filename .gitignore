@@ -87,6 +87,8 @@ datasets/
 *.wav
 *.mp3
 *.flac
+*.png
+*.svg
 !backend/tests/fixtures/*.wav
 !backend/tests/fixtures/*.mp3
 !backend/tests/fixtures/*.flac

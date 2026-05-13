@@ -76,6 +76,6 @@ python scripts/run_condition_mode_ablation.py \
 
 还不能成立：
 
-- `internal_film` 一定显著优于 `baseline none`
+- `internal_film` 的主观质量结论已经定论
 - 所有 prompt 都能稳定产生明显风格差异
 - `external_preset` 已经等价于真实专用模型效果

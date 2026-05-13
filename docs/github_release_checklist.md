@@ -63,7 +63,7 @@ grep -R "token\\|secret\\|password\\|api_key\\|hf_" -n . \
 确认：
 
 - README 已说明当前主前端是 React + Vite
-- README 没有继续写成 Vue 主前端
+- README 已明确前端入口为 `frontend/src/main.tsx` / `frontend/src/App.tsx`
 - 文档准确描述 `internal_film` 只是内部条件注入机制
 - 没有夸大成“已完成强文本风格控制模型”
 

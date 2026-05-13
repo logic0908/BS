@@ -15,7 +15,7 @@ local_models/
 
 runtime/
   style_adapter/
-    text_style_adapter_v1.pt  # 可选
+    text_style_adapter_1000.pt
 ```
 
 当前仓库里的真实默认 preset 是 `final_primary / lain`。实际运行时优先读取：
@@ -29,7 +29,7 @@ runtime/
 - `config.json`：So-VITS-SVC 模型结构、speaker 列表、speech encoder 配置。
 - `checkpoint_best_legacy_500.pt`：`vec768l12` / `vec256l9` 等 ContentVec 语音内容编码器所需预训练权重。
 - `rmvpe.pt`：RMVPE F0 提取模型。
-- `text_style_adapter_v1.pt`：可选增强型文本风格 Adapter 权重；缺失时不会阻断主链路，系统会回退到本地 deterministic fallback encoder。
+- `text_style_adapter_1000.pt`：当前训练型文本风格 Adapter 权重；缺失时链路会降级到非训练型适配策略。
 
 ## 为什么不提交权重
 

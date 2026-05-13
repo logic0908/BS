@@ -26,6 +26,9 @@
   - `train_size / val_size / test_size`
   - `best_epoch / best_val_loss / test_loss`
   - `device / gpu_name`
+  - `missing=[]`
+  - `has_model_state_dict=true`
+  - `has_sample_embeddings=true`
 
 ## 3. internal_film Smoke 结果
 
@@ -69,6 +72,7 @@
   - `speaker_embedding_similarity`：`baseline_none=0.905602`，`internal_film=0.906717`
   - `brightness_delta`：`baseline_none=23.530762`，`internal_film=26.608887`
 - 边界：客观指标仅是辅助趋势证据，不等价于主观听感显著性结论。
+- 边界：本轮训练对象是轻量 TextStyleAdapter，不是从头训练完整 So-VITS-SVC 主模型。
 
 ## 5. 回归测试
 

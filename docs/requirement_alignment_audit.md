@@ -1,6 +1,6 @@
 # Requirement Alignment Audit
 
-> 注：本审计记录保留了早期需求措辞，其中 “Vue 3 或 React” 属于源需求候选技术栈描述；当前仓库维护中的真实主前端已经收敛为 **React + Vite + TypeScript**，主入口为 `frontend/src/main.tsx` 与 `frontend/src/App.tsx`。
+> 注：当前仓库维护中的真实主前端为 **React + Vite + TypeScript**，主入口是 `frontend/src/main.tsx` 与 `frontend/src/App.tsx`。本审计中的旧阶段候选技术栈仅作为历史背景，不作为当前实现描述。
 
 生成日期：2026-05-06
 
@@ -10,7 +10,7 @@
 
 - 系统题目：基于文本提示词控制的歌声风格转换系统。
 - 研究内容：浏览器访问，上传清唱/人声音频，输入自然语言风格描述，输出符合描述的转换歌声，可试听和下载；不追求从零生成新歌曲，专注已有干声/人声的高质量、可控音色与风格转换，研究重心是“文本到声音风格”的映射控制。
-- 前端要求：源需求允许 Vue 3 或 React；当前实现采用 React + Vite，并保留 WaveSurfer.js、Axios、上传区、提示词输入区、风格标签、风格强度滑块、开始转换按钮、结果波形、播放/暂停、下载、A/B 对比。
+- 前端要求：当前实现采用 React + Vite，并包含上传区、提示词输入区、转换按钮、状态进度、结果播放/下载、关键指标表和技术链路字段说明。
 - 后端要求：FastAPI、Celery + Redis、Demucs 或 UVR 人声分离、So-VITS-SVC 或 DiffSVC 且优先 So-VITS-SVC、Sentence-BERT/BERT 文本编码、Adapter 风格控制、GPU 推理。
 - 核心创新要求：文本提示词编码为固定维度风格向量；Adapter 接收风格向量并输出 Bias/Scale；Bias/Scale 调制 So-VITS-SVC 中间层特征；训练时冻结 So-VITS-SVC 大部分权重，只训练 Adapter；准备 `{干声音频, 风格描述文本}` 小规模配对数据集；产出训练好的“文本提示词-歌声风格”适配器模型；论文包含系统设计、模型训练细节、主观评测结果。
 - 部署要求：Docker 是推荐部署产出；Featurize 当前实际演示可继续使用本机 base 环境，但 README 必须区分“当前运行方式”和“后续 Docker 化”。
@@ -32,7 +32,7 @@
 | 1. 浏览器 B/S 系统 | `frontend/` 是 React + Vite，后端 FastAPI 提供 `/api/v1/*`，Vite proxy 面向浏览器。 | 已符合 | 无核心缺口。 | 保持当前 B/S 结构。 | P0 |
 | 2. 上传音频 | 前端 `FileUpload` 调 `/api/v1/upload`；后端保存上传并生成 `vocals_id`。 | 已符合 | 上传大小限制与格式提示仍可再细化。 | 保持主链路。 | P0 |
 | 3. WaveSurfer 波形 | `frontend/src/components/WaveformPlayer.tsx` 使用 WaveSurfer.js，失败回退原生 audio。 | 已符合 | fallback 是可接受降级，不是缺口。 | 保持。 | P0 |
-| 4. A/B 对比 | `AudioComparePanel` 提供原音频与转换音频对比播放。 | 已符合 | 无。 | 保持。 | P0 |
+| 4. A/B 对比 | 主页面已删除重复 A/B 对比大卡片，保留转换结果播放器与关键指标对比用于答辩展示。 | 部分符合 | 交互对比能力降为“指标+结果卡片”，不再作为主页面独立大卡片。 | 当前展示策略已收口，若后续需要可在高级视图恢复。 | P1 |
 | 5. 下载结果 | `/api/v1/tasks/{task_id}/result` 返回音频 blob；前端下载不从中文响应头读取元信息。 | 已符合 | 下载响应只承载音频，元数据在 JSON。 | 保持 ASCII-safe 合约。 | P0 |
 | 6. FastAPI | `backend/app/main.py` 和 `backend/app/api/endpoints/synthesis.py` 已接入。 | 已符合 | 无。 | 保持。 | P0 |
 | 7. Celery + Redis | `backend/app/core/celery_app.py`、`backend/app/workers/svc_tasks.py` 与 runbook 已存在；默认 `SVC_USE_CELERY=true`。 | 已符合 | 运行依赖 Redis 服务实际启动。 | 保持启动脚本/文档。 | P0 |

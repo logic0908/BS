@@ -20,7 +20,7 @@
 - 两个新增男声 preset 目前均为 `license_unknown`，只能作为内部复核/本地毕业设计技术演示候选；公开演示或传播前必须补齐授权说明。
 - `style_library` 会先按文本提示词做风格匹配；当多个模型预设得分接近时，会优先选择 `ready=true` 的模型预设。若命中的是未配置模型预设，严格模式下仍返回 `SVC_MODEL_PRESET_NOT_CONFIGURED`。
 - `allow_preset_fallback` 仍保持上一轮语义不变：仅在显式开启时才允许回退到 `final_primary/lain`，并且必须显示 requested/effective preset 与 fallback reason。
-- 文本风格适配器（TextStyleAdapter）目前仍是训练型参数级控制：它可以帮助选择模型预设、微调 `transpose/style_strength` 等参数，但不是 So-VITS-SVC 网络内部 Bias/Scale 注入。
+- 文本风格适配器（TextStyleAdapter）当前已作为训练型适配器接入 `internal_film` 链路，任务 metadata 可见 `adapter_mode=trained`、`adapter_type=trained_mlp` 与 checkpoint 加载状态。
 
 ## 常用脚本
 

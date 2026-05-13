@@ -4,13 +4,12 @@
 
 当前演示目标是展示以下闭环：
 
-1. 上传人声 / 干声音频
-2. 输入 `style_prompt`
+1. 上传干声音频
+2. 输入风格提示词
 3. 创建 So-VITS-SVC 转换任务
-4. 走真实 So-VITS-SVC 推理
-5. 在 `internal_film` 模式下完成内部 Bias/Scale 注入
-6. 前端查看结果、播放波形、下载音频
-7. 查看 debug metadata 与 `conditioning_report.json`
+4. 在 `internal_film` 条件模式下完成真实推理
+5. 在前端查看任务状态、转换结果、关键指标和技术链路
+6. 下载输出音频
 
 ## 2. 启动顺序
 
@@ -22,13 +21,13 @@ redis-server --daemonize yes
 
 ### 2.2 启动 FastAPI
 
-推荐方式一：
+推荐：
 
 ```bash
 bash scripts/start_real_svc_demo.sh
 ```
 
-推荐方式二：
+或：
 
 ```bash
 cd backend
@@ -41,7 +40,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 bash scripts/start_celery_worker.sh
 ```
 
-若需要更稳定的 GPU 演示 worker，可使用：
+如需 GPU worker：
 
 ```bash
 bash scripts/start_celery_gpu_worker.sh
@@ -60,29 +59,18 @@ cd frontend
 npm run dev -- --host 0.0.0.0
 ```
 
-### 2.5 打开浏览器
-
-- 前端：`http://127.0.0.1:3001`
-- 后端：`http://127.0.0.1:8000`
-
-## 3. 页面演示步骤
+## 3. 页面演示步骤（当前三栏工作台）
 
 1. 打开前端工作台
-2. 上传一个短的人声音频
-3. 输入 `style_prompt`，例如：
+2. 上传短时长人声音频
+3. 输入提示词，例如：`温柔、明亮、流行感更强的女声风格`
+4. 点击“开始风格转换”
+5. 观察中栏任务状态与进度
+6. 查看中栏转换结果卡片（输出播放器 + 下载）
+7. 查看右栏关键指标对比与技术链路
+8. 展开“字段说明”查看中英字段对应关系
 
-```text
-温柔、明亮、流行感更强的女声风格
-```
-
-4. 如需保持默认配置，可直接开始转换
-5. 若要展示高级参数，可展开高级区域查看：
-   - `transpose`
-   - `style_strength`
-   - `model_preset_id`
-6. 等待任务完成
-7. 在 A/B 波形区域查看原始音频与转换结果
-8. 在技术详情区查看 `condition_mode`、`executed_internal_film` 等信息
+说明：主页面已删除重复的“转换前后音频对比”大卡片，避免答辩展示时纵向堆叠过长。
 
 ## 4. 如何查看 debug metadata
 
@@ -94,36 +82,34 @@ runtime/debug/<task_id>/
 
 写出调试文件。建议重点查看：
 
-- `style_embedding.pt`
-- `style_embedding.json`
 - `conditioning_report.json`
 - `sovits_command.txt`
 - `sovits_debug.json`
 - `converted.wav`
 
-关键信息包括：
+重点字段：
 
 - `condition_mode`
-- `style_prompt`
 - `film_strength`
-- `film_target`
-- `injection_target`
 - `executed_internal_film`
+- `text_style_adapter_loaded`
+- `adapter_mode`
+- `adapter_type`
+- `adapter_checkpoint`
 
-## 5. 演示中建议的表述
+## 5. 推荐答辩表述
 
-建议这样描述当前系统：
+建议：
 
-- 系统已实现文本提示词驱动的 So-VITS-SVC 内部条件调制机制
-- 当前已完成真实 GPU smoke 验证
-- 现阶段重点证明机制可执行，不夸大为强文本语义可控模型
+- 系统已实现文本提示词驱动的 So-VITS-SVC 条件调制链路
+- 当前已完成真实链路可执行性验证
+- 当前训练对象是 TextStyleAdapter，核心结论是“链路可复现、可验证”
 
-避免这样描述：
+边界：
 
-- 任意歌手声音生成
-- 完美复刻音色
-- 商业级可用
-- 已完成充分效果验证
+- 文本提示词会影响风格调制，不会自动切换目标音色
+- 当前默认目标音色由 `final_primary / lain` 决定
+- 主观听评结论仍需人工补充
 
 ## 6. 常见问题
 
@@ -135,11 +121,7 @@ runtime/debug/<task_id>/
 echo $SOVITS_MOCK
 ```
 
-应为：
-
-```bash
-false
-```
+应为 `false`。
 
 ### 6.2 想确认是否走到 internal_film
 
@@ -148,15 +130,11 @@ false
 - `runtime/debug/<task_id>/conditioning_report.json`
 - `runtime/debug/<task_id>/sovits_command.txt`
 
-应至少看到：
+应至少出现：
 
 - `executed_internal_film=true`
-- `--style-emb-path`
 - `--condition-mode internal_film`
 
-### 6.3 输出音频仍不理想
+### 6.3 prompt 写“男声”但输出仍偏向 lain
 
-需要如实说明：
-
-- 当前效果受目标模型、输入音频质量、F0 提取和人声分离质量影响
-- 当前系统已证明机制接入，不代表效果结论已经完备
+这是当前设计边界：目标音色仍由当前模型预设与目标音色配置决定。若需要真正男声音色输出，需要接入男声模型预设或男声目标音色并切换配置。

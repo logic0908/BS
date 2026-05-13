@@ -1,6 +1,6 @@
 # So-VITS-SVC 真实推理说明
 
-本文档说明当前仓库中 So-VITS-SVC 真实推理链路、`internal_film` 条件推理入口、调试证据文件以及常见问题排查方式。
+本文档说明当前仓库中 So-VITS-SVC 真实推理链路、`internal_film` 条件推理入口、调试证据文件以及常见问题排查方式。当前默认演示链路为 `final_primary / lain`，并加载 `runtime/style_adapter/text_style_adapter_1000.pt`。
 
 ## 1. 当前真实链路
 
@@ -144,6 +144,8 @@ runtime/debug/<task_id>/
 - `injection_target`
 - `executed_internal_film`
 - `called_conditioned_inference`
+
+当链路正常时，任务 metadata 中应可看到 `adapter_mode=trained`、`adapter_type=trained_mlp`、`text_style_adapter_loaded=true`。
 
 ## 6. 真实 smoke 摘要
 
