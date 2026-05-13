@@ -1,6 +1,6 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent, screen, waitFor } from '@testing-library/dom'
+import { fireEvent, screen, waitFor, within } from '@testing-library/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import axios from 'axios'
 
@@ -18,16 +18,6 @@ vi.mock('./components/FileUpload', () => ({
       选择测试音频
     </button>
   ),
-}))
-
-const { createWaveSurferMock } = vi.hoisted(() => ({
-  createWaveSurferMock: vi.fn(),
-}))
-
-vi.mock('wavesurfer.js', () => ({
-  default: {
-    create: createWaveSurferMock,
-  },
 }))
 
 const mockedAxios = axios as unknown as {
@@ -128,9 +118,9 @@ function styleEvidenceResponse() {
       total_count: 5,
       score: 0.6,
       level: 'partial',
-      text: '仅用于旧面板',
+      text: '旧面板字段',
     },
-    warnings: ['该分析为启发式客观指标，仅用于展示变化趋势，不能替代人工听评。'],
+    warnings: ['旧说明'],
   }
 }
 
@@ -166,21 +156,7 @@ const flush = async () => {
   await Promise.resolve()
 }
 
-function buildWaveSurferInstance() {
-  const handlers: Record<string, () => void> = {}
-  return {
-    on: vi.fn((event: string, cb: () => void) => {
-      handlers[event] = cb
-    }),
-    load: vi.fn(() => handlers.ready?.()),
-    play: vi.fn(async () => {}),
-    pause: vi.fn(() => {}),
-    stop: vi.fn(() => {}),
-    destroy: vi.fn(() => {}),
-  }
-}
-
-describe('App frontend demo dashboard', () => {
+describe('App compact localized dashboard', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -188,9 +164,6 @@ describe('App frontend demo dashboard', () => {
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
-
-    createWaveSurferMock.mockReset()
-    createWaveSurferMock.mockImplementation(() => buildWaveSurferInstance())
 
     mockedAxios.get.mockReset()
     mockedAxios.post.mockReset()
@@ -238,22 +211,14 @@ describe('App frontend demo dashboard', () => {
     })
   }
 
-  it('页面布局存在 workspace-grid 和三列容器', async () => {
-    await renderApp()
-
-    expect(screen.getByTestId('workspace-grid')).toBeInTheDocument()
-    expect(screen.getByTestId('input-column')).toBeInTheDocument()
-    expect(screen.getByTestId('result-column')).toBeInTheDocument()
-    expect(screen.getByTestId('metrics-column')).toBeInTheDocument()
-  })
-
-  it('转换成功展示结果、下载、关键指标和技术链路，并移除旧结论文案', async () => {
+  async function runSuccessFlow(prompt = '清亮少年感男声') {
     mockedAxios.post.mockImplementation(async (url: string) => {
       if (url === '/api/v1/upload') return uploadOk
       if (url === '/api/v1/convert') return { data: { task_id: 'task-1' } }
       if (url === '/api/v1/style-analysis/compare') return { data: styleEvidenceResponse() }
       throw new Error(`Unexpected POST ${url}`)
     })
+
     mockedAxios.get.mockImplementation(async (url: string) => {
       if (url === '/api/v1/system/health') return defaultHealth
       if (url === '/api/v1/system/sovits-check') return defaultCheck
@@ -266,7 +231,7 @@ describe('App frontend demo dashboard', () => {
     await selectAndUpload()
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('文本风格提示词'), { target: { value: '清亮少年感男声' } })
+      fireEvent.change(screen.getByLabelText('风格提示词'), { target: { value: prompt } })
       await flush()
     })
 
@@ -276,46 +241,79 @@ describe('App frontend demo dashboard', () => {
     })
 
     await waitFor(() => expect(screen.getByText('转换成功')).toBeInTheDocument())
-    expect(screen.getByRole('link', { name: '下载结果' })).toBeInTheDocument()
-    expect(screen.getByText('关键指标对比')).toBeInTheDocument()
-    expect(screen.getByText('技术链路')).toBeInTheDocument()
+  }
 
-    expect(screen.queryByText('该分析为启发式客观指标，仅用于展示变化趋势，不能替代人工听评。')).not.toBeInTheDocument()
-    expect(screen.queryByText('自动结论')).not.toBeInTheDocument()
-    expect(screen.queryByText('匹配 3/5')).not.toBeInTheDocument()
-    expect(screen.queryByText('得分 0.600')).not.toBeInTheDocument()
+  it('存在三列工作台并移除转换前后音频对比卡片', async () => {
+    await renderApp()
+
+    expect(screen.getByTestId('workspace-grid')).toBeInTheDocument()
+    expect(screen.getByTestId('input-column')).toBeInTheDocument()
+    expect(screen.getByTestId('result-column')).toBeInTheDocument()
+    expect(screen.getByTestId('metrics-column')).toBeInTheDocument()
+
+    expect(screen.queryByText('转换前后音频对比')).not.toBeInTheDocument()
+    expect(screen.queryByText('转换前后音频可以对比播放')).not.toBeInTheDocument()
   })
 
-  it('prompt 包含男声且 speaker=lain 时显示警告', async () => {
-    mockedAxios.post.mockImplementation(async (url: string) => {
-      if (url === '/api/v1/upload') return uploadOk
-      if (url === '/api/v1/convert') return { data: { task_id: 'task-1' } }
-      if (url === '/api/v1/style-analysis/compare') return { data: styleEvidenceResponse() }
-      throw new Error(`Unexpected POST ${url}`)
-    })
-    mockedAxios.get.mockImplementation(async (url: string) => {
-      if (url === '/api/v1/system/health') return defaultHealth
-      if (url === '/api/v1/system/sovits-check') return defaultCheck
-      if (url === '/api/v1/tasks/task-1') return { data: successTaskData({ speaker: 'lain' }) }
-      if (url === '/api/v1/tasks/task-1/result') return { data: new Blob(['wav']) }
-      throw new Error(`Unexpected GET ${url}`)
-    })
+  it('主界面显示中文字段和中文值，且主显示区不出现英文原字段', async () => {
+    await runSuccessFlow()
 
-    await renderApp()
-    await selectAndUpload()
+    expect(screen.getAllByText('条件控制模式').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('注入强度').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('音频时长').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('采样率').length).toBeGreaterThan(0)
+    expect(screen.getByText('结果接口')).toBeInTheDocument()
+    expect(screen.getAllByText('适配器权重').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('已加载训练适配器').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('目标音色').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('模型预设').length).toBeGreaterThan(0)
+
+    expect(screen.getAllByText('内部 FiLM 注入').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('训练适配器').length).toBeGreaterThan(0)
+    expect(screen.getByText('训练得到的 MLP 适配器')).toBeInTheDocument()
+    expect(screen.getAllByText('主模型预设').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('当前目标音色 lain').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('是').length).toBeGreaterThan(0)
+
+    const taskMain = screen.getByTestId('task-main-fields').textContent ?? ''
+    const resultMain = screen.getByTestId('result-main-fields').textContent ?? ''
+    const techMain = screen.getByTestId('tech-main-fields').textContent ?? ''
+    const mainVisibleText = `${taskMain}${resultMain}${techMain}`
+
+    expect(mainVisibleText).not.toContain('condition_mode')
+    expect(mainVisibleText).not.toContain('film_strength')
+    expect(mainVisibleText).not.toContain('duration_seconds')
+    expect(mainVisibleText).not.toContain('sample_rate')
+    expect(mainVisibleText).not.toContain('result_url')
+    expect(mainVisibleText).not.toContain('adapter_checkpoint')
+    expect(mainVisibleText).not.toContain('text_style_adapter_loaded')
+  })
+
+  it('字段说明默认折叠，展开后显示中英对照术语', async () => {
+    await runSuccessFlow('清亮风格')
+
+    const termsDetails = screen.getByTestId('terms-details') as HTMLDetailsElement
+    expect(termsDetails.open).toBe(false)
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('文本风格提示词'), { target: { value: '清亮、少年感、男声' } })
+      fireEvent.click(within(termsDetails).getByText('字段说明'))
       await flush()
     })
 
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: '开始风格转换' }))
-      await flush()
-    })
+    expect(termsDetails.open).toBe(true)
+    expect(screen.getByText('模型预设（model_preset / final_primary）')).toBeInTheDocument()
+    expect(screen.getByText('目标音色（speaker / lain）')).toBeInTheDocument()
+    expect(screen.getByText('音频时长（duration_seconds）')).toBeInTheDocument()
+    expect(screen.getByText('内部 FiLM 注入（internal_film）')).toBeInTheDocument()
+    expect(screen.getByText('已加载训练适配器（text_style_adapter_loaded）')).toBeInTheDocument()
+    expect(screen.getByText('适配器权重（adapter_checkpoint）')).toBeInTheDocument()
+  })
+
+  it('prompt 包含男声且目标音色为 lain 时显示中文边界 warning', async () => {
+    await runSuccessFlow('清亮、少年感、男声')
 
     await waitFor(() => {
-      expect(screen.getByText(/当前提示词包含男声方向，但实际目标 speaker 仍为 lain/)).toBeInTheDocument()
+      expect(screen.getByText(/当前提示词包含“男声”方向/)).toBeInTheDocument()
     })
   })
 
@@ -325,6 +323,7 @@ describe('App frontend demo dashboard', () => {
       if (url === '/api/v1/convert') return { data: { task_id: 'task-1' } }
       throw new Error(`Unexpected POST ${url}`)
     })
+
     mockedAxios.get.mockImplementation(async (url: string) => {
       if (url === '/api/v1/system/health') return defaultHealth
       if (url === '/api/v1/system/sovits-check') return defaultCheck
@@ -336,7 +335,7 @@ describe('App frontend demo dashboard', () => {
     await selectAndUpload()
 
     await act(async () => {
-      fireEvent.change(screen.getByLabelText('文本风格提示词'), { target: { value: '清亮风格' } })
+      fireEvent.change(screen.getByLabelText('风格提示词'), { target: { value: '清亮风格' } })
       await flush()
     })
 
@@ -348,6 +347,5 @@ describe('App frontend demo dashboard', () => {
     await waitFor(() => expect(screen.getByText('转换失败')).toBeInTheDocument())
     expect(screen.getByText('任务状态为 succeeded，但 result_url 缺失。')).toBeInTheDocument()
     expect(screen.queryByText('转换成功')).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: '下载结果' })).not.toBeInTheDocument()
   })
 })

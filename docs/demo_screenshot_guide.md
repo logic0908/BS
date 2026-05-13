@@ -1,6 +1,6 @@
 # Demo Screenshot Guide
 
-答辩和论文建议至少补齐以下截图：
+答辩和论文建议至少补齐以下截图（当前前端已完成“布局压缩 + 术语中文化”）：
 
 1. 首页 / 正式演示工作台
 2. 系统状态区：真实 SVC、GPU 可见、Internal FiLM
@@ -8,17 +8,21 @@
 4. 文本 prompt 输入区
 5. 高级转换参数区
 6. 转换中任务进度
-7. 转换结果 A/B 音频对比
+7. 转换结果卡片（单输出播放器 + 下载）
 8. 关键指标对比表（输入/输出/变化）
-9. `condition_mode / film_strength / executed_internal_film / text_style_adapter_loaded` 技术链路展示
+9. 技术链路展示（中文主字段）
 10. 模型缺失或依赖缺失错误提示示例
 
 截图建议同时保留：
 
 - 时间戳
 - prompt 文本
-- preset 信息
-- condition mode
-- speaker 信息（如 `lain`）
-- 若 prompt 包含“男声”但 speaker 未切换，保留对应 warning 截图
+- 模型预设信息
+- 目标音色信息（如 `lain`）
+- 若 prompt 包含“男声”但目标音色未切换，保留对应 warning 截图
 - 若存在 fallback，则显式展示 warning
+
+补充说明：
+
+- 主页面已删除“转换前后音频对比”大卡片，避免重复播放器占用空间。
+- 主页面字段统一中文，英文原字段仅保留在折叠的“字段说明”中。

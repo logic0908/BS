@@ -3,7 +3,6 @@ import axios from 'axios'
 
 import './App.css'
 import { compareStyleEvidence } from './api/styleAnalysis'
-import AudioComparePanel from './components/AudioComparePanel'
 import FileUpload from './components/FileUpload'
 import KeyMetricsComparePanel from './components/KeyMetricsComparePanel'
 import {
@@ -19,6 +18,7 @@ import {
   type TaskResponse,
   type UploadResponse,
 } from './types'
+import { formatSampleRate, formatSeconds, labelOf, valueLabelOf } from './utils/displayLabels'
 
 type StyleEvidenceRequest = {
   inputPath: string
@@ -97,22 +97,14 @@ function App() {
   }, [sovitsCheck?.sovits?.film_strength, systemHealth?.sovits?.film_strength, systemHealth?.text_conditioning?.film_strength])
 
   const isRealSvc = useMemo(() => {
-    if (typeof systemHealth?.mock_mode === 'boolean') {
-      return !systemHealth.mock_mode
-    }
-    if (typeof sovitsCheck?.SOVITS_MOCK === 'boolean') {
-      return !sovitsCheck.SOVITS_MOCK
-    }
+    if (typeof systemHealth?.mock_mode === 'boolean') return !systemHealth.mock_mode
+    if (typeof sovitsCheck?.SOVITS_MOCK === 'boolean') return !sovitsCheck.SOVITS_MOCK
     return null
   }, [sovitsCheck?.SOVITS_MOCK, systemHealth?.mock_mode])
 
   const gpuReady = useMemo(() => {
-    if (typeof sovitsCheck?.torch_cuda_available === 'boolean') {
-      return sovitsCheck.torch_cuda_available
-    }
-    if (typeof sovitsCheck?.torch_device_count === 'number') {
-      return sovitsCheck.torch_device_count > 0
-    }
+    if (typeof sovitsCheck?.torch_cuda_available === 'boolean') return sovitsCheck.torch_cuda_available
+    if (typeof sovitsCheck?.torch_device_count === 'number') return sovitsCheck.torch_device_count > 0
     return null
   }, [sovitsCheck?.torch_cuda_available, sovitsCheck?.torch_device_count])
 
@@ -172,7 +164,7 @@ function App() {
         if (cancelled) return
         if (!data?.ok) {
           setStyleEvidence(null)
-          setStyleEvidenceWarning('风格分析未返回有效数据（不影响主结果）。')
+          setStyleEvidenceWarning('关键指标分析未返回有效数据（不影响主结果）。')
           return
         }
         setStyleEvidence(data)
@@ -180,7 +172,7 @@ function App() {
       .catch(() => {
         if (cancelled) return
         setStyleEvidence(null)
-        setStyleEvidenceWarning('风格分析失败（不影响播放和下载）。')
+        setStyleEvidenceWarning('关键指标分析失败（不影响主结果）。')
       })
 
     return () => {
@@ -266,9 +258,7 @@ function App() {
   }
 
   const handleUpload = async () => {
-    if (!inputAudio) {
-      return
-    }
+    if (!inputAudio) return
 
     setStatus(AppStatus.UPLOADING)
     setStatusMessage('正在上传音频并进行输入检查...')
@@ -333,9 +323,7 @@ function App() {
         setTaskStatus(update.status)
         setTaskStage(update.stage)
         setTaskProgress(update.progress)
-        if (update.message) {
-          setStatusMessage(update.message)
-        }
+        if (update.message) setStatusMessage(update.message)
       })
 
       const mergedMetadata = normalizeResultMetadata(completed)
@@ -387,31 +375,31 @@ function App() {
   const resultFileName = basenamePath(metadata?.final_output_path ?? `${result?.taskId || 'result'}.wav`)
   const malePromptMismatchWarning =
     promptText.includes('男声') && effectiveSpeaker === 'lain'
-      ? '当前提示词包含男声方向，但实际目标 speaker 仍为 lain。文本提示词会影响风格调制，但不会自动切换为男声模型；若需男声输出，需要接入男声 preset/speaker。'
+      ? '当前提示词包含“男声”方向，但当前目标音色仍为“lain”。文本提示词只影响风格调制，不会自动切换目标音色；若需真正男声输出，需要接入男声模型预设或男声目标音色。'
       : null
 
   return (
     <div className="page-shell" translate="no">
       <main className="page-container" data-testid="main-container">
-        <header className="hero-compact">
+        <header className="hero-section">
           <div className="hero-main">
             <h1>基于文本提示词控制的歌声风格转换系统</h1>
-            <p>上传干声音频，输入风格提示词，执行 So-VITS-SVC + internal_film 转换并展示结果对比。</p>
+            <p>上传干声音频，输入风格提示词，执行 So-VITS-SVC 与内部 FiLM 注入转换并展示结果。</p>
           </div>
           <section className="hero-status" aria-label="系统状态">
-            <StatusRow label="Real SVC" value={statusLabel(isRealSvc, '未检测')} tone={toneFromBoolean(isRealSvc)} />
+            <StatusRow label="真实 SVC" value={statusLabel(isRealSvc, '未检测')} tone={toneFromBoolean(isRealSvc)} />
             <StatusRow
-              label="Internal FiLM"
-              value={conditionMode === 'internal_film' ? '已启用' : conditionMode || '未检测'}
+              label="内部注入"
+              value={valueLabelOf(conditionMode)}
               tone={conditionMode === 'internal_film' ? 'success' : 'warning'}
             />
             <StatusRow
-              label="Trained Adapter"
-              value={valueOrFallback(metadata?.text_style_adapter_loaded, '未检测')}
+              label="训练适配器"
+              value={valueLabelOf(metadata?.text_style_adapter_loaded)}
               tone={metadata?.text_style_adapter_loaded === true ? 'success' : 'neutral'}
             />
             <StatusRow
-              label="GPU/Model Ready"
+              label="GPU/模型状态"
               value={gpuModelReadyLabel(gpuReady, modelReady)}
               tone={gpuReady && modelReady ? 'success' : gpuReady === null && modelReady === null ? 'neutral' : 'warning'}
             />
@@ -423,7 +411,7 @@ function App() {
             <article className="card">
               <div className="card-header compact-header">
                 <h2>上传音频</h2>
-                <span className="badge badge-neutral">/api/v1/upload</span>
+                <span className="badge badge-neutral">上传接口</span>
               </div>
               <FileUpload
                 onFileSelect={handleFileSelect}
@@ -435,13 +423,13 @@ function App() {
               />
 
               {inputAudio ? (
-                <div className="meta-grid single-column">
-                  <MetaItem label="文件名" value={inputAudio.name} />
-                  <MetaItem label="大小" value={formatBytes(inputAudio.size)} />
-                  <MetaItem label="时长" value={formatDuration(inputAudio.durationSeconds)} />
-                  <MetaItem label="格式" value={formatMimeType(inputAudio.mimeType, inputAudio.name)} />
-                  <MetaItem label="上传状态" value={uploadStatusLabel(status)} />
-                  <MetaItem label="vocals_id" value={valueOrFallback(uploadInfo?.vocals_id, '未返回')} />
+                <div className="compact-meta-grid">
+                  <MiniMeta label="文件名" value={inputAudio.name} />
+                  <MiniMeta label="文件大小" value={formatBytes(inputAudio.size)} />
+                  <MiniMeta label="音频时长" value={formatDuration(inputAudio.durationSeconds)} />
+                  <MiniMeta label="音频格式" value={formatMimeType(inputAudio.mimeType, inputAudio.name)} />
+                  <MiniMeta label="上传状态" value={uploadStatusLabel(status)} />
+                  <MiniMeta label="人声编号" value={valueOrFallback(uploadInfo?.vocals_id, '未返回')} />
                 </div>
               ) : null}
 
@@ -452,11 +440,11 @@ function App() {
 
             <article className="card">
               <div className="card-header compact-header">
-                <h2>Prompt 与参数</h2>
-                <span className="badge badge-neutral">{modelPresetId} / {speaker}</span>
+                <h2>提示词与参数</h2>
+                <span className="badge badge-neutral">参数区</span>
               </div>
 
-              <label htmlFor="style-prompt" className="field-label">文本风格提示词</label>
+              <label htmlFor="style-prompt" className="field-label">风格提示词</label>
               <textarea
                 id="style-prompt"
                 className="styled-textarea"
@@ -475,11 +463,11 @@ function App() {
                 ))}
               </div>
 
-              <div className="meta-grid two-column">
-                <MetaItem label="condition_mode" value={valueOrFallback(conditionMode, '未返回')} />
-                <MetaItem label="film_strength" value={formatFilmStrength(filmStrength)} />
-                <MetaItem label="model_preset_id" value={modelPresetId} />
-                <MetaItem label="speaker" value={speaker} />
+              <div className="compact-meta-grid" data-testid="task-main-fields">
+                <MiniMeta label={labelOf('condition_mode')} value={valueLabelOf(conditionMode)} />
+                <MiniMeta label={labelOf('film_strength')} value={formatFilmStrength(filmStrength)} />
+                <MiniMeta label={labelOf('model_preset_id')} value={valueLabelOf(modelPresetId)} />
+                <MiniMeta label={labelOf('speaker')} value={valueLabelOf(speaker)} />
               </div>
 
               <button type="button" className="primary-button" onClick={handleConvert} disabled={!canConvert}>
@@ -488,17 +476,17 @@ function App() {
             </article>
           </section>
 
-          <section className="result-column" data-testid="result-column">
+          <section className="result-column" data-testid="result-column" data-testid-main-ui="true">
             <article className="card" role="status" aria-live="polite">
               <div className="card-header compact-header">
                 <h2>转换状态</h2>
-                <span className={`badge ${taskStatusBadgeClass(status, taskStatus)}`}>{taskStatusText(status, taskStatus)}</span>
+                <span className={`badge ${taskStatusBadgeClass(status, taskStatus)}`}>{valueLabelOf(taskStatusText(status, taskStatus))}</span>
               </div>
-              <div className="meta-grid two-column">
-                <MetaItem label="task_id" value={valueOrFallback(taskId, '未创建')} />
-                <MetaItem label="status" value={valueOrFallback(taskStatus, status)} />
-                <MetaItem label="stage" value={valueOrFallback(taskStage, '等待中')} />
-                <MetaItem label="progress" value={`${progressPercent}%`} />
+              <div className="compact-meta-grid">
+                <MiniMeta label={labelOf('task_id')} value={valueOrFallback(taskId, '未创建')} />
+                <MiniMeta label={labelOf('status')} value={valueLabelOf(taskStatusText(status, taskStatus))} />
+                <MiniMeta label={labelOf('stage')} value={valueLabelOf(taskStage || 'pending')} />
+                <MiniMeta label={labelOf('progress')} value={`${progressPercent}%`} />
               </div>
               <div className="task-message">{statusMessage}</div>
 
@@ -534,34 +522,20 @@ function App() {
                   <audio controls src={result.outputAudioUrl} className="result-audio" />
                   <a href={result.downloadUrl} download={`converted_${result.taskId}.wav`} className="download-button">下载结果</a>
 
-                  <div className="meta-grid two-column">
-                    <PathMetaItem label="result_url" value={valueOrFallback(result.resultUrl, '未返回')} />
-                    <PathMetaItem label="输出文件" value={resultFileName} />
-                    <PathMetaItem label="输出路径" value={valueOrFallback(metadata?.final_output_path, '未返回')} />
-                    <MetaItem label="duration_seconds" value={valueOrFallback(metadata?.duration_seconds, '未返回')} />
-                    <MetaItem label="sample_rate" value={valueOrFallback(metadata?.sample_rate, '未返回')} />
+                  <div className="compact-meta-grid" data-testid="result-main-fields">
+                    <PathMiniMeta label={labelOf('result_url')} value={valueOrFallback(result.resultUrl, '未返回')} />
+                    <PathMiniMeta label={labelOf('output_file')} value={resultFileName} />
+                    <PathMiniMeta label={labelOf('output_path')} value={valueOrFallback(metadata?.final_output_path, '未返回')} />
+                    <MiniMeta label={labelOf('duration_seconds')} value={formatSeconds(metadata?.duration_seconds)} />
+                    <MiniMeta label={labelOf('sample_rate')} value={formatSampleRate(metadata?.sample_rate)} />
                   </div>
                 </div>
               )}
             </article>
-
-            {status === AppStatus.SUCCEEDED && result && (
-              <AudioComparePanel
-                originalUrl={result.inputAudioUrl}
-                convertedUrl={result.outputAudioUrl}
-                originalLabel={result.inputAudioUrl ? '输入音频' : '输入音频不可预览'}
-                convertedLabel="输出音频"
-                originalDuration={inputAudio?.durationSeconds ?? inputQuality?.duration ?? null}
-                convertedDuration={typeof metadata?.duration_seconds === 'number' ? metadata.duration_seconds : null}
-                originalSampleRate={inputQuality?.sample_rate ?? null}
-                convertedSampleRate={typeof metadata?.sample_rate === 'number' ? metadata.sample_rate : null}
-              />
-            )}
           </section>
 
           <section className="metrics-column" data-testid="metrics-column">
             <KeyMetricsComparePanel analysis={styleEvidence} resultMetadata={metadata} inputQuality={inputQuality} />
-
             {styleEvidenceWarning ? <div className="inline-warning" role="status">{styleEvidenceWarning}</div> : null}
 
             <article className="card compact-card" aria-label="技术链路">
@@ -570,24 +544,42 @@ function App() {
                 <span className="badge badge-neutral">真实链路</span>
               </div>
 
-              <div className="meta-grid two-column">
-                <MetaItem label="condition_mode" value={valueOrFallback(metadata?.condition_mode ?? conditionMode, '未返回')} />
-                <MetaItem label="film_strength" value={valueOrFallback(metadata?.film_strength ?? filmStrength, '未返回')} />
-                <BoolMetaItem label="executed_internal_film" value={metadata?.executed_internal_film ?? null} />
-                <BoolMetaItem label="text_style_adapter_loaded" value={metadata?.text_style_adapter_loaded ?? null} />
-                <MetaItem label="adapter_mode" value={valueOrFallback(metadata?.adapter_mode, '未返回')} />
-                <MetaItem label="adapter_type" value={valueOrFallback(metadata?.adapter_type, '未返回')} />
-                <PathMetaItem label="adapter_checkpoint" value={compactCheckpoint(metadata?.adapter_checkpoint ?? metadata?.adapter_checkpoint_path)} />
-                <MetaItem
-                  label="model_preset"
-                  value={valueOrFallback(metadata?.effective_model_preset_id ?? metadata?.model_preset_id ?? modelPresetId, '未返回')}
+              <div className="compact-meta-grid" data-testid="tech-main-fields">
+                <MiniMeta label={labelOf('condition_mode')} value={valueLabelOf(metadata?.condition_mode ?? conditionMode)} />
+                <MiniMeta label={labelOf('film_strength')} value={formatFilmStrength(metadata?.film_strength ?? filmStrength)} />
+                <MiniMeta label={labelOf('executed_internal_film')} value={valueLabelOf(metadata?.executed_internal_film)} />
+                <MiniMeta label={labelOf('text_style_adapter_loaded')} value={valueLabelOf(metadata?.text_style_adapter_loaded)} />
+                <MiniMeta label={labelOf('adapter_mode')} value={valueLabelOf(metadata?.adapter_mode)} />
+                <MiniMeta label={labelOf('adapter_type')} value={valueLabelOf(metadata?.adapter_type)} />
+                <PathMiniMeta
+                  label={labelOf('adapter_checkpoint')}
+                  value={compactCheckpoint(metadata?.adapter_checkpoint ?? metadata?.adapter_checkpoint_path)}
                 />
-                <MetaItem label="speaker" value={effectiveSpeaker} />
+                <MiniMeta label={labelOf('model_preset')} value={valueLabelOf(metadata?.effective_model_preset_id ?? metadata?.model_preset_id ?? modelPresetId)} />
+                <MiniMeta label={labelOf('speaker')} value={valueLabelOf(effectiveSpeaker)} />
               </div>
 
-              <div className="inline-note">当前目标 speaker：{effectiveSpeaker}</div>
-
               {malePromptMismatchWarning ? <div className="inline-warning" role="alert">{malePromptMismatchWarning}</div> : null}
+
+              <details className="terms-details" data-testid="terms-details">
+                <summary>字段说明</summary>
+                <div className="terms-content">
+                  <p><strong>模型预设（model_preset / final_primary）</strong> 当前系统选择的模型配置方案，决定使用哪组模型权重和默认目标音色。</p>
+                  <p><strong>目标音色（speaker / lain）</strong> 目标音色决定输出主音色。提示词中的“男声”不会自动切换目标音色。</p>
+                  <p><strong>音频时长（duration_seconds）</strong> 音频持续时间，单位为秒。</p>
+                  <p><strong>采样率（sample_rate）</strong> 音频每秒采样点数量，单位为 Hz。</p>
+                  <p><strong>结果接口（result_url）</strong> 后端返回转换结果信息的接口地址。</p>
+                  <p><strong>输出路径（output_path）</strong> 后端生成音频文件在服务器上的保存路径，用于调试和追踪。</p>
+                  <p><strong>条件控制模式（condition_mode）</strong> 当前采用的文本条件控制方式。</p>
+                  <p><strong>内部 FiLM 注入（internal_film）</strong> 将文本风格向量转换为内部条件量并注入 So-VITS-SVC 内部特征。</p>
+                  <p><strong>注入强度（film_strength）</strong> 文本风格条件影响内部特征的强度。</p>
+                  <p><strong>已执行内部注入（executed_internal_film）</strong> 表示本次推理是否真实执行内部 FiLM 注入。</p>
+                  <p><strong>已加载训练适配器（text_style_adapter_loaded）</strong> 表示是否加载训练后的 TextStyleAdapter。</p>
+                  <p><strong>适配器模式（adapter_mode）</strong> 适配器当前工作方式。</p>
+                  <p><strong>适配器类型（adapter_type）</strong> 当前适配器结构类型。</p>
+                  <p><strong>适配器权重（adapter_checkpoint）</strong> 当前加载的 TextStyleAdapter 权重文件。</p>
+                </div>
+              </details>
             </article>
           </section>
         </section>
@@ -601,8 +593,8 @@ function StageSteps({ currentStage }: { currentStage: string }) {
   const labels: Record<string, string> = {
     uploaded: '上传完成',
     text_encoded: '文本编码',
-    adapter_applied: 'Adapter',
-    inference_running: 'Internal FiLM',
+    adapter_applied: '适配器处理',
+    inference_running: '内部注入与推理',
     completed: '输出生成',
   }
 
@@ -640,31 +632,20 @@ function StatusRow({
   )
 }
 
-function MetaItem({ label, value }: { label: string; value: string }) {
+function MiniMeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="meta-item">
+    <div className="mini-meta-item">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
   )
 }
 
-function PathMetaItem({ label, value }: { label: string; value: string }) {
+function PathMiniMeta({ label, value }: { label: string; value: string }) {
   return (
-    <div className="meta-item">
+    <div className="mini-meta-item">
       <span>{label}</span>
       <strong className="path-ellipsis" title={value}>{value}</strong>
-    </div>
-  )
-}
-
-function BoolMetaItem({ label, value }: { label: string; value: boolean | null }) {
-  const text = value === true ? 'true' : value === false ? 'false' : '未返回'
-  const badgeClass = value === true ? 'badge badge-success' : value === false ? 'badge badge-warning' : 'badge badge-neutral'
-  return (
-    <div className="meta-item">
-      <span>{label}</span>
-      <strong><span className={badgeClass}>{text}</span></strong>
     </div>
   )
 }
@@ -710,22 +691,14 @@ async function pollTask(taskId: string, onUpdate: (update: TaskUpdate) => void):
 
 function parseTaskError(task: TaskResponse): { message: string; details: string } {
   const error = task.error
-  if (typeof error === 'string') {
-    return { message: error, details: error }
-  }
+  if (typeof error === 'string') return { message: error, details: error }
   if (error && typeof error === 'object') {
     const maybeCode = typeof error.code === 'string' ? error.code : null
     const maybeMessage = typeof error.message === 'string' ? error.message : null
     const maybeDetails = error.details && typeof error.details === 'object' ? JSON.stringify(error.details) : '未返回 details'
-    return {
-      message: maybeMessage || maybeCode || task.message || '转换失败',
-      details: maybeDetails,
-    }
+    return { message: maybeMessage || maybeCode || task.message || '转换失败', details: maybeDetails }
   }
-  return {
-    message: task.message || '转换失败',
-    details: '后端未返回错误详情。',
-  }
+  return { message: task.message || '转换失败', details: '后端未返回错误详情。' }
 }
 
 function normalizeResultMetadata(taskData: TaskResponse): ResultMetadata {
@@ -768,9 +741,7 @@ function buildStyleEvidenceRequest(metadata: ResultMetadata, promptText: string,
   const inputPath = metadata.input_vocals_path ?? metadata.input_audio_path
   const outputPath = metadata.final_output_path
 
-  if (!normalizedPrompt || !inputPath || !outputPath) {
-    return null
-  }
+  if (!normalizedPrompt || !inputPath || !outputPath) return null
 
   return {
     inputPath,
@@ -897,7 +868,7 @@ async function getAudioDuration(url: string): Promise<number | null> {
 
 function formatDuration(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return '未检测'
-  return `${value.toFixed(2)} s`
+  return `${value.toFixed(2)} 秒`
 }
 
 function formatFilmStrength(value: number | null): string {
@@ -937,9 +908,7 @@ function compactCheckpoint(value: string | null | undefined): string {
   if (!value) return '未返回'
   const normalized = value.replace(/\\/g, '/')
   const runtimeIndex = normalized.indexOf('runtime/')
-  if (runtimeIndex >= 0) {
-    return normalized.slice(runtimeIndex)
-  }
+  if (runtimeIndex >= 0) return normalized.slice(runtimeIndex)
   return basenamePath(normalized)
 }
 
