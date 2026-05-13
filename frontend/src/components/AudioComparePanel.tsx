@@ -1,15 +1,23 @@
-import { useMemo, useRef, useState } from 'react'
-import { Download, PauseCircle, PlayCircle, Repeat2 } from 'lucide-react'
+import { useMemo } from 'react'
 
-import WaveformPlayer, { type WaveformPlayerHandle } from './WaveformPlayer'
+import WaveformPlayer from './WaveformPlayer'
 
 interface AudioComparePanelProps {
   originalUrl: string | null
   convertedUrl: string | null
   originalLabel?: string
   convertedLabel?: string
-  downloadUrl?: string | null
-  downloadFilename?: string
+  originalDuration?: number | null
+  convertedDuration?: number | null
+  originalSampleRate?: number | null
+  convertedSampleRate?: number | null
+}
+
+function formatNumber(value: number | null | undefined, unit = ''): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '未返回'
+  }
+  return `${value.toFixed(2)}${unit}`
 }
 
 const AudioComparePanel: React.FC<AudioComparePanelProps> = ({
@@ -17,103 +25,63 @@ const AudioComparePanel: React.FC<AudioComparePanelProps> = ({
   convertedUrl,
   originalLabel = '输入音频',
   convertedLabel = '输出音频',
-  downloadUrl,
-  downloadFilename = 'converted.wav',
+  originalDuration,
+  convertedDuration,
+  originalSampleRate,
+  convertedSampleRate,
 }) => {
-  const originalRef = useRef<WaveformPlayerHandle | null>(null)
-  const convertedRef = useRef<WaveformPlayerHandle | null>(null)
-  const [activeSide, setActiveSide] = useState<'original' | 'converted'>('original')
-
-  const canPlayOriginal = Boolean(originalUrl)
-  const canPlayConverted = Boolean(convertedUrl)
-  const canToggle = canPlayOriginal && canPlayConverted
-
-  const activeSummary = useMemo(() => {
-    if (activeSide === 'converted' && convertedUrl) {
-      return '当前聚焦：输出音频'
-    }
-    if (originalUrl) {
-      return '当前聚焦：输入音频'
-    }
-    return '输入音频不可预览'
-  }, [activeSide, convertedUrl, originalUrl])
-
-  const stopAll = () => {
-    originalRef.current?.stop()
-    convertedRef.current?.stop()
-  }
-
-  const playOriginal = () => {
-    if (!originalUrl) {
-      return
-    }
-    convertedRef.current?.stop()
-    originalRef.current?.play()
-    setActiveSide('original')
-  }
-
-  const playConverted = () => {
-    if (!convertedUrl) {
-      return
-    }
-    originalRef.current?.stop()
-    convertedRef.current?.play()
-    setActiveSide('converted')
-  }
-
-  const toggleAB = () => {
-    if (!canToggle) {
-      return
-    }
-    if (activeSide === 'original') {
-      playConverted()
-      return
-    }
-    playOriginal()
-  }
+  const summary = useMemo(() => {
+    if (!originalUrl && !convertedUrl) return '当前无可预览音频'
+    if (!originalUrl) return '输入音频不可预览'
+    if (!convertedUrl) return '等待输出音频生成'
+    return '转换前后音频可对比播放'
+  }, [convertedUrl, originalUrl])
 
   return (
-    <section className="compare-panel" aria-label="输入输出音频对比">
-      <div className="compare-actions">
-        <button type="button" className="secondary-button" onClick={playOriginal} disabled={!canPlayOriginal}>
-          <PlayCircle className="button-icon" />
-          播放输入
-        </button>
-        <button type="button" className="secondary-button" onClick={playConverted} disabled={!canPlayConverted}>
-          <PlayCircle className="button-icon" />
-          播放输出
-        </button>
-        <button type="button" className="secondary-button" onClick={toggleAB} disabled={!canToggle}>
-          <Repeat2 className="button-icon" />
-          A/B 切换
-        </button>
-        <button type="button" className="secondary-button" onClick={stopAll} disabled={!canPlayOriginal && !canPlayConverted}>
-          <PauseCircle className="button-icon" />
-          停止
-        </button>
-        {downloadUrl ? (
-          <a href={downloadUrl} download={downloadFilename} className="download-button">
-            <Download className="button-icon" />
-            下载输出音频
-          </a>
-        ) : null}
+    <article className="card compact-card" aria-label="转换前后音频对比">
+      <div className="card-header">
+        <h2>转换前后音频对比</h2>
+        <span className="badge badge-neutral">A/B</span>
       </div>
 
       <div className="compare-summary" aria-live="polite">
-        {activeSummary}
+        {summary}
       </div>
 
-      <div className="compare-grid">
-        <div className={`compare-card ${activeSide === 'original' ? 'is-active' : ''}`}>
-          <h4 className="audio-card-title">{originalLabel}</h4>
-          {originalUrl ? <WaveformPlayer ref={originalRef} audioUrl={originalUrl} label={originalLabel} /> : <div className="waveform-placeholder">输入音频不可预览</div>}
+      <div className="compare-grid compact-compare-grid">
+        <div className="compare-card">
+          <h3 className="audio-card-title">{originalLabel}</h3>
+          {originalUrl ? (
+            <>
+              <audio controls className="result-audio" src={originalUrl} />
+              <WaveformPlayer audioUrl={originalUrl} label={originalLabel} height={72} />
+            </>
+          ) : (
+            <div className="waveform-placeholder">输入音频不可预览</div>
+          )}
+          <div className="mini-meta">
+            <span>时长：{formatNumber(originalDuration, ' s')}</span>
+            <span>采样率：{formatNumber(originalSampleRate, ' Hz')}</span>
+          </div>
         </div>
-        <div className={`compare-card ${activeSide === 'converted' ? 'is-active' : ''}`}>
-          <h4 className="audio-card-title">{convertedLabel}</h4>
-          <WaveformPlayer ref={convertedRef} audioUrl={convertedUrl} label={convertedLabel} waveColor="#d97706" progressColor="#7c2d12" />
+
+        <div className="compare-card">
+          <h3 className="audio-card-title">{convertedLabel}</h3>
+          {convertedUrl ? (
+            <>
+              <audio controls className="result-audio" src={convertedUrl} />
+              <WaveformPlayer audioUrl={convertedUrl} label={convertedLabel} waveColor="#d97706" progressColor="#7c2d12" height={72} />
+            </>
+          ) : (
+            <div className="waveform-placeholder">输出音频尚未生成</div>
+          )}
+          <div className="mini-meta">
+            <span>时长：{formatNumber(convertedDuration, ' s')}</span>
+            <span>采样率：{formatNumber(convertedSampleRate, ' Hz')}</span>
+          </div>
         </div>
       </div>
-    </section>
+    </article>
   )
 }
 

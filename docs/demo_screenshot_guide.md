@@ -8,9 +8,9 @@
 4. 文本 prompt 输入区
 5. 高级转换参数区
 6. 转换中任务进度
-7. 转换结果 A/B 波形对比
-8. `condition_mode / film_strength / executed_internal_film` 元数据展示
-9. 风格证据分析面板
+7. 转换结果 A/B 音频对比
+8. 关键指标对比表（输入/输出/变化）
+9. `condition_mode / film_strength / executed_internal_film / text_style_adapter_loaded` 技术链路展示
 10. 模型缺失或依赖缺失错误提示示例
 
 截图建议同时保留：
@@ -19,4 +19,6 @@
 - prompt 文本
 - preset 信息
 - condition mode
+- speaker 信息（如 `lain`）
+- 若 prompt 包含“男声”但 speaker 未切换，保留对应 warning 截图
 - 若存在 fallback，则显式展示 warning

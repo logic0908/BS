@@ -51,3 +51,15 @@
 - `external_preset` 若未绑定真实独立专用模型，不能表述成真实专模效果
 - 真实大规模听评和更多样本仍是后续工作
 - 当前客观指标显示的是可量化差异趋势，不等价于主观优劣结论
+
+## Prompt 与目标音色边界说明
+
+- 当前 So-VITS-SVC 主转换音色由 `model_preset_id` 和 `speaker` 决定。
+- 当前真实 demo 默认是 `final_primary / speaker=lain`。
+- 文本 prompt（含“男声”）会通过 TextStyleAdapter / internal_film 影响风格调制向量，不等于自动切换目标 speaker。
+- 因此 prompt 写“清亮、少年感、男声”时，可能改变风格趋势，但输出仍会偏向当前目标 speaker（如 `lain`）的音色。
+- 若要真正男声输出，需要：
+  - 接入男声 So-VITS-SVC 模型或多 speaker 模型；
+  - 在 `svc_model_presets.json` 中配置男声 preset；
+  - 后端根据用户选择或 prompt 解析切换 `model_preset_id/speaker`；
+  - 前端提供“目标音色/目标 speaker”选择，而不是只依赖 prompt。
