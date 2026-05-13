@@ -1,7 +1,5 @@
-import { Component, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
-import { ChevronDown, Cpu, ShieldAlert, Sparkles, Wand2 } from 'lucide-react'
 
 import './App.css'
 import { compareStyleEvidence } from './api/styleAnalysis'
@@ -10,243 +8,172 @@ import FileUpload from './components/FileUpload'
 import StyleEvidencePanel from './components/StyleEvidencePanel'
 import {
   AppStatus,
-  STYLE_PRESETS,
+  STYLE_PROMPT_CHIPS,
   type AudioFile,
-  type StyleEvidenceCompareResponse,
-  type InputQualitySummary,
-  type ModelPresetCollection,
-  type ModelPresetStatus,
+  type ConvertResponse,
   type ProcessingResult,
   type ResultMetadata,
-  type StyleSelection,
   type SovitsCheckResponse,
+  type StyleEvidenceCompareResponse,
   type SystemHealthResponse,
   type TaskResponse,
   type UploadResponse,
 } from './types'
 
-type ResultFetchPayload = {
-  blob: Blob
-  taskData: TaskResponse
-}
-
-type DebugArtifacts = {
-  extracted_features?: string
-  quality_report?: string
-}
-
 type StyleEvidenceRequest = {
   inputPath: string
   outputPath: string
   promptText: string
-  modelPresetId: string | null
+  modelPresetId: string
 }
 
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
-  constructor(props: { children: ReactNode }) {
-    super(props)
-    this.state = { hasError: false, error: null }
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error }
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="app-shell" translate="no">
-          <div className="page-frame">
-            <section className="surface-card error-card">
-              <h2>页面渲染出错了</h2>
-              <pre>{this.state.error?.message}</pre>
-              <button type="button" className="primary-button" onClick={() => window.location.reload()}>
-                刷新页面
-              </button>
-            </section>
-          </div>
-        </div>
-      )
-    }
-    return this.props.children
-  }
+type TaskUpdate = {
+  status: string
+  stage: string
+  progress: number
+  message: string
 }
+
+const FILE_SIZE_LIMIT = 10 * 1024 * 1024
+const DEFAULT_PRESET_ID = 'final_primary'
+const DEFAULT_SPEAKER = 'lain'
 
 function App() {
   const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null)
   const [sovitsCheck, setSovitsCheck] = useState<SovitsCheckResponse | null>(null)
-  const [promptText, setPromptText] = useState('')
-  const [styleStrength, setStyleStrength] = useState(0.65)
-  const [transpose, setTranspose] = useState(0)
-  const [f0Method, setF0Method] = useState('rmvpe')
-  const [autoPredictF0, setAutoPredictF0] = useState(false)
-  const [sliceDb, setSliceDb] = useState(-40)
-  const [clipSeconds, setClipSeconds] = useState(0)
-  const [padSeconds, setPadSeconds] = useState(0.5)
-  const [allowPresetFallback, setAllowPresetFallback] = useState(false)
-  const [modelPresetId, setModelPresetId] = useState('final_primary')
-  const [isVocalOnly, setIsVocalOnly] = useState(false)
-  const [uploadedVocalOnly, setUploadedVocalOnly] = useState<boolean | null>(null)
-  const [advancedParamsOpen, setAdvancedParamsOpen] = useState(false)
-  const [techDetailsOpen, setTechDetailsOpen] = useState(false)
-  const [styleSingerOpen, setStyleSingerOpen] = useState(false)
-  const [phSeq, setPhSeq] = useState('')
-  const [noteSeq, setNoteSeq] = useState('')
-  const [noteDurSeq, setNoteDurSeq] = useState('')
-  const [noteTypeSeq, setNoteTypeSeq] = useState('')
-  const [featureSource, setFeatureSource] = useState<string | null>(null)
-  const [featureDebugArtifacts, setFeatureDebugArtifacts] = useState<DebugArtifacts | null>(null)
-  const [featureQualityMessage, setFeatureQualityMessage] = useState<string | null>(null)
 
-  const [status, setStatus] = useState<typeof AppStatus[keyof typeof AppStatus]>(AppStatus.IDLE)
+  const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE)
   const [inputAudio, setInputAudio] = useState<AudioFile | null>(null)
+  const [uploadInfo, setUploadInfo] = useState<UploadResponse | null>(null)
   const [vocalsId, setVocalsId] = useState<string | null>(null)
-  const [taskStatusMsg, setTaskStatusMsg] = useState<string | null>(null)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  const [promptText, setPromptText] = useState('')
+
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [taskStatus, setTaskStatus] = useState<string>('idle')
+  const [taskStage, setTaskStage] = useState<string>('')
+  const [taskProgress, setTaskProgress] = useState<number>(0)
+  const [statusMessage, setStatusMessage] = useState<string>('等待上传音频。')
+
   const [result, setResult] = useState<ProcessingResult | null>(null)
-  const [selectedStyle, setSelectedStyle] = useState<StyleSelection | null>(null)
-  const [taskSnapshot, setTaskSnapshot] = useState<TaskResponse | null>(null)
-  const [inputQuality, setInputQuality] = useState<InputQualitySummary | null>(null)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [errorDetails, setErrorDetails] = useState<string | null>(null)
+
+  const [styleEvidenceRequest, setStyleEvidenceRequest] = useState<StyleEvidenceRequest | null>(null)
   const [styleEvidence, setStyleEvidence] = useState<StyleEvidenceCompareResponse | null>(null)
   const [styleEvidenceLoading, setStyleEvidenceLoading] = useState(false)
-  const [styleEvidenceError, setStyleEvidenceError] = useState<string | null>(null)
-  const [styleEvidenceRequest, setStyleEvidenceRequest] = useState<StyleEvidenceRequest | null>(null)
+  const [styleEvidenceWarning, setStyleEvidenceWarning] = useState<string | null>(null)
 
   const isUploading = status === AppStatus.UPLOADING
   const isConverting = status === AppStatus.CONVERTING
-  const promptError = !promptText.trim() ? '请先输入目标风格描述。' : null
-  const mockMode =
-    typeof systemHealth?.sovits?.mock === 'boolean'
-      ? Boolean(systemHealth.sovits.mock)
-      : typeof sovitsCheck?.SOVITS_MOCK === 'boolean'
-        ? Boolean(sovitsCheck.SOVITS_MOCK)
-        : Boolean(systemHealth?.mock_mode)
-  const gpuStatus = getGpuStatus(sovitsCheck)
-  const canStartConversion = Boolean(vocalsId) && Boolean(promptText.trim()) && !isUploading && !isConverting
-  const taskProgress = Math.max(0, Math.min(100, Number(taskSnapshot?.progress ?? 0)))
-  const promptConflict = useMemo(() => detectPromptConflict(promptText), [promptText])
-  const currentResultMetadata = useMemo(
-    () => result?.metadata ?? normalizeResultMetadata(taskSnapshot),
-    [result?.metadata, taskSnapshot],
-  )
-  const effectiveTaskBackendMode =
-    currentResultMetadata?.task_backend_mode ?? taskSnapshot?.task_backend_mode ?? systemHealth?.task_backend_mode ?? 'celery'
-  const modelPresets = useMemo(
-    () => pickPresets(systemHealth?.svc_model_presets ?? sovitsCheck?.svc_model_presets ?? null),
-    [sovitsCheck?.svc_model_presets, systemHealth?.svc_model_presets],
-  )
-  const activePreset = useMemo(
-    () => modelPresets.find((item) => item.preset_id === modelPresetId) ?? modelPresets[0] ?? null,
-    [modelPresetId, modelPresets],
-  )
-  const activePresetConfigured = activePreset?.ready ?? false
-  const effectiveF0Method = currentResultMetadata?.f0_method ?? sovitsCheck?.f0_method ?? f0Method
-  const effectiveAutoPredictF0 = currentResultMetadata?.auto_predict_f0 ?? sovitsCheck?.auto_predict_f0 ?? autoPredictF0
-  const selectedStyleNeedsDedicatedPreset = Boolean(selectedStyle?.current_style_has_dedicated_model)
-  const selectedStylePresetReady = Boolean(selectedStyle?.model_preset_ready)
-  const requestedModelPresetId =
-    currentResultMetadata?.requested_model_preset_id ?? selectedStyle?.model_preset_id ?? modelPresetId
-  const effectiveModelPresetId =
-    currentResultMetadata?.effective_model_preset_id ?? currentResultMetadata?.model_preset_id ?? modelPresetId
-  const presetFallbackUsed = Boolean(currentResultMetadata?.preset_fallback_used)
-  const backendConditionMode =
-    currentResultMetadata?.condition_mode ?? systemHealth?.sovits?.condition_mode ?? sovitsCheck?.sovits?.condition_mode ?? 'internal_film'
-  const backendFilmStrength =
-    currentResultMetadata?.film_strength ?? systemHealth?.text_conditioning?.film_strength ?? sovitsCheck?.text_conditioning?.film_strength ?? null
-  const backendConditionedInferExists =
-    systemHealth?.sovits?.conditioned_infer_exists ?? sovitsCheck?.sovits?.conditioned_infer_exists ?? null
-  const activePresetStatusLabel = activePreset?.ready ? '已配置' : '未绑定模型'
-  const unconfiguredPresetNotice = !activePresetConfigured
-    ? allowPresetFallback
-      ? '当前选中的目标模型预设尚未真正配置完成；开启 `allow_preset_fallback` 后会回退到 final_primary/lain，并把请求模型预设与实际使用模型预设分开记录。'
-      : '当前选中的目标模型预设尚未真正配置完成；严格模式下该模型预设不能推理，也不会伪装成该风格。'
-    : null
+
+  const modelPresetId = useMemo(() => {
+    const fromHealth = systemHealth?.svc_model_presets?.active_preset_id?.trim()
+    if (fromHealth) return fromHealth
+    const fromCheck = sovitsCheck?.svc_model_presets?.active_preset_id?.trim()
+    if (fromCheck) return fromCheck
+    return DEFAULT_PRESET_ID
+  }, [sovitsCheck?.svc_model_presets?.active_preset_id, systemHealth?.svc_model_presets?.active_preset_id])
+
+  const speaker = useMemo(() => {
+    const presets = systemHealth?.svc_model_presets?.presets ?? sovitsCheck?.svc_model_presets?.presets ?? []
+    const current = presets.find((item) => item.preset_id === modelPresetId)
+    return current?.speaker || DEFAULT_SPEAKER
+  }, [modelPresetId, sovitsCheck?.svc_model_presets?.presets, systemHealth?.svc_model_presets?.presets])
+
+  const conditionMode = useMemo(() => {
+    return systemHealth?.sovits?.condition_mode ?? sovitsCheck?.sovits?.condition_mode ?? 'internal_film'
+  }, [sovitsCheck?.sovits?.condition_mode, systemHealth?.sovits?.condition_mode])
+
+  const filmStrength = useMemo(() => {
+    return systemHealth?.text_conditioning?.film_strength ?? systemHealth?.sovits?.film_strength ?? sovitsCheck?.sovits?.film_strength ?? null
+  }, [sovitsCheck?.sovits?.film_strength, systemHealth?.sovits?.film_strength, systemHealth?.text_conditioning?.film_strength])
+
+  const isRealSvc = useMemo(() => {
+    if (typeof systemHealth?.mock_mode === 'boolean') {
+      return !systemHealth.mock_mode
+    }
+    if (typeof sovitsCheck?.SOVITS_MOCK === 'boolean') {
+      return !sovitsCheck.SOVITS_MOCK
+    }
+    return null
+  }, [sovitsCheck?.SOVITS_MOCK, systemHealth?.mock_mode])
+
+  const gpuReady = useMemo(() => {
+    if (typeof sovitsCheck?.torch_cuda_available === 'boolean') {
+      return sovitsCheck.torch_cuda_available
+    }
+    if (typeof sovitsCheck?.torch_device_count === 'number') {
+      return sovitsCheck.torch_device_count > 0
+    }
+    return null
+  }, [sovitsCheck?.torch_cuda_available, sovitsCheck?.torch_device_count])
+
+  const modelReady = useMemo(() => {
+    const runtime = systemHealth?.sovits ?? sovitsCheck?.sovits
+    if (typeof runtime?.model_exists === 'boolean' && typeof runtime?.config_exists === 'boolean') {
+      return runtime.model_exists && runtime.config_exists
+    }
+    return null
+  }, [sovitsCheck?.sovits, systemHealth?.sovits])
+
+  const canUpload = Boolean(inputAudio) && !isUploading && !isConverting
+  const canConvert = Boolean(vocalsId) && promptText.trim().length > 0 && !isUploading && !isConverting
 
   useEffect(() => {
     let cancelled = false
 
-    const loadSystemStatus = async () => {
+    const loadStatus = async () => {
       try {
         const [healthResponse, checkResponse] = await Promise.all([
           axios.get<SystemHealthResponse>('/api/v1/system/health'),
           axios.get<SovitsCheckResponse>('/api/v1/system/sovits-check'),
         ])
-        if (cancelled) {
-          return
-        }
+        if (cancelled) return
         setSystemHealth(healthResponse.data ?? null)
         setSovitsCheck(checkResponse.data ?? null)
       } catch {
-        if (!cancelled) {
-          setSystemHealth(null)
-          setSovitsCheck(null)
-        }
+        if (cancelled) return
+        setSystemHealth(null)
+        setSovitsCheck(null)
       }
     }
 
-    void loadSystemStatus()
+    void loadStatus()
     return () => {
       cancelled = true
     }
   }, [])
 
   useEffect(() => {
-    const activePresetId = systemHealth?.svc_model_presets?.active_preset_id
-    if (typeof activePresetId === 'string' && activePresetId.trim()) {
-      setModelPresetId(activePresetId)
-    }
-  }, [systemHealth?.svc_model_presets?.active_preset_id])
-
-  useEffect(() => {
-    if (typeof sovitsCheck?.f0_method === 'string' && sovitsCheck.f0_method.trim()) {
-      setF0Method(sovitsCheck.f0_method)
-    }
-    if (typeof sovitsCheck?.auto_predict_f0 === 'boolean') {
-      setAutoPredictF0(sovitsCheck.auto_predict_f0)
-    }
-    if (typeof sovitsCheck?.slice_db === 'number') {
-      setSliceDb(sovitsCheck.slice_db)
-    }
-    if (typeof sovitsCheck?.clip_seconds === 'number') {
-      setClipSeconds(sovitsCheck.clip_seconds)
-    }
-    if (typeof sovitsCheck?.pad_seconds === 'number') {
-      setPadSeconds(sovitsCheck.pad_seconds)
-    }
-  }, [sovitsCheck?.auto_predict_f0, sovitsCheck?.clip_seconds, sovitsCheck?.f0_method, sovitsCheck?.pad_seconds, sovitsCheck?.slice_db])
-
-  useEffect(() => {
-    if (status !== AppStatus.COMPLETED || !styleEvidenceRequest) {
+    if (!styleEvidenceRequest || status !== AppStatus.SUCCEEDED) {
       setStyleEvidenceLoading(false)
       return
     }
 
     let cancelled = false
     setStyleEvidenceLoading(true)
-    setStyleEvidenceError(null)
+    setStyleEvidenceWarning(null)
 
     void compareStyleEvidence({
       input_path: styleEvidenceRequest.inputPath,
       output_path: styleEvidenceRequest.outputPath,
       prompt_text: styleEvidenceRequest.promptText,
-      model_preset_id: styleEvidenceRequest.modelPresetId ?? undefined,
+      model_preset_id: styleEvidenceRequest.modelPresetId,
     })
-      .then((response) => {
-        if (cancelled) {
-          return
-        }
-        if (!response?.ok) {
+      .then((data) => {
+        if (cancelled) return
+        if (!data?.ok) {
           setStyleEvidence(null)
-          setStyleEvidenceError('风格证据分析未返回有效结果，但转换结果仍可播放。')
+          setStyleEvidenceWarning('风格证据分析未返回有效结果，但不影响主转换结果。')
           return
         }
-        setStyleEvidence(response)
+        setStyleEvidence(data)
       })
       .catch(() => {
-        if (!cancelled) {
-          setStyleEvidence(null)
-          setStyleEvidenceError('风格证据分析失败，但转换结果仍可播放。')
-        }
+        if (cancelled) return
+        setStyleEvidence(null)
+        setStyleEvidenceWarning('风格证据分析失败，但不影响播放和下载。')
       })
       .finally(() => {
         if (!cancelled) {
@@ -257,1408 +184,834 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [
-    status,
-    styleEvidenceRequest,
-  ])
+  }, [status, styleEvidenceRequest])
+
+  useEffect(() => {
+    return () => {
+      if (inputAudio?.url) {
+        window.URL.revokeObjectURL(inputAudio.url)
+      }
+      if (result?.outputAudioUrl) {
+        window.URL.revokeObjectURL(result.outputAudioUrl)
+      }
+    }
+  }, [inputAudio?.url, result?.outputAudioUrl])
+
+  const clearResultState = () => {
+    if (result?.outputAudioUrl) {
+      window.URL.revokeObjectURL(result.outputAudioUrl)
+    }
+    setResult(null)
+    setTaskId(null)
+    setTaskStatus('idle')
+    setTaskStage('')
+    setTaskProgress(0)
+    setErrorMessage(null)
+    setErrorDetails(null)
+    clearStyleEvidenceState()
+  }
 
   const clearStyleEvidenceState = () => {
     setStyleEvidence(null)
-    setStyleEvidenceError(null)
-    setStyleEvidenceLoading(false)
     setStyleEvidenceRequest(null)
+    setStyleEvidenceWarning(null)
+    setStyleEvidenceLoading(false)
   }
 
-  const updatePromptText = (nextPrompt: string) => {
-    setPromptText(nextPrompt)
+  const handlePromptChange = (value: string) => {
+    setPromptText(value)
     clearStyleEvidenceState()
   }
 
   const handleFileSelect = async (file: File) => {
-    if (file.size > 10 * 1024 * 1024) {
-      setErrorMsg('上传音频文件大小不能超过 10MB。')
-      setStatus(AppStatus.ERROR)
+    if (file.size > FILE_SIZE_LIMIT) {
+      setStatus(AppStatus.FAILED)
+      setErrorMessage('上传音频文件大小不能超过 10MB。')
       return
     }
 
-    const fileUrl = window.URL.createObjectURL(file)
-    setInputAudio({
-      file,
-      url: fileUrl,
-      name: file.name,
-      duration: 0,
-    })
-    setResult(null)
+    if (inputAudio?.url) {
+      window.URL.revokeObjectURL(inputAudio.url)
+    }
+
+    clearResultState()
+    setUploadInfo(null)
     setVocalsId(null)
-    setUploadedVocalOnly(null)
-    setTaskSnapshot(null)
-    setSelectedStyle(null)
-    setFeatureDebugArtifacts(null)
-    setFeatureQualityMessage(null)
-    setInputQuality(null)
-    clearStyleEvidenceState()
-    setErrorMsg(null)
-    setStatus(AppStatus.UPLOADING)
-    setTaskStatusMsg(isVocalOnly ? '正在标准化干声并生成输入质量报告…' : '正在分离/标准化人声并生成输入质量报告…')
 
-    try {
-      const formData = new FormData()
-      formData.append('audio', file)
-      formData.append('is_vocal_only', String(isVocalOnly))
-      const response = await axios.post<UploadResponse>('/api/v1/upload', formData)
-      setVocalsId(response.data?.vocals_id ?? null)
-      setUploadedVocalOnly(Boolean(response.data?.is_vocal_only))
-      setInputQuality(response.data?.input_quality_summary ?? null)
-      setTaskStatusMsg('音频上传完成，可以开始默认 So-VITS-SVC 转换。')
-      setStatus(AppStatus.READY_TO_CONVERT)
-    } catch (err: unknown) {
-      setStatus(AppStatus.ERROR)
-      setTaskStatusMsg(null)
-      setErrorMsg(readAxiosMessage(err, '上传或预处理失败，请检查后端服务。'))
+    const objectUrl = window.URL.createObjectURL(file)
+    const nextAudio: AudioFile = {
+      file,
+      url: objectUrl,
+      name: file.name,
+      size: file.size,
+      mimeType: file.type,
+      durationSeconds: null,
     }
-  }
 
-  const pollTask = async (taskId: string): Promise<ResultFetchPayload> => {
-    for (let i = 0; i < 180; i += 1) {
-      const statusResponse = await axios.get<TaskResponse>(`/api/v1/tasks/${taskId}`)
-      const data = (statusResponse.data ?? {}) as TaskResponse
-      setTaskSnapshot(data)
-      setTaskStatusMsg(typeof data.message === 'string' ? data.message : '正在处理…')
-      setSelectedStyle(data.selected_style ?? null)
-      if (data.status === 'succeeded') {
-        if (!data.result_url) {
-          throw buildTaskFailureError(data, '后端把任务标记为成功，但没有返回 result_url。')
-        }
-        const resultResponse = await axios.get(`/api/v1/tasks/${taskId}/result`, { responseType: 'blob' })
-        return {
-          blob: resultResponse.data as Blob,
-          taskData: data,
-        }
+    setInputAudio(nextAudio)
+    setStatus(AppStatus.FILE_SELECTED)
+    setStatusMessage('已选择新音频，旧结果已清空。')
+
+    const durationSeconds = await getAudioDuration(objectUrl)
+    setInputAudio((current) => {
+      if (!current || current.url !== objectUrl) {
+        return current
       }
-      if (data.status === 'failed') {
-        throw buildTaskFailureError(data)
+      return {
+        ...current,
+        durationSeconds,
       }
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-    }
-    throw new Error('任务超时，请重试。')
-  }
-
-  const completeWithBlob = (payload: ResultFetchPayload) => {
-    const originalUrl = inputAudio?.url
-    if (!originalUrl) {
-      throw new Error('原始音频缺失。')
-    }
-    const convertedUrl = window.URL.createObjectURL(payload.blob)
-    const metadata = normalizeResultMetadata(payload.taskData)
-    setResult({
-      originalUrl,
-      convertedUrl,
-      metadata,
     })
-    setStatus(AppStatus.COMPLETED)
-    setTaskStatusMsg('转换完成，可以在下方进行 A/B 对比。')
-    clearStyleEvidenceState()
-    setStyleEvidenceRequest(buildStyleEvidenceRequest(metadata, promptText, modelPresetId))
   }
 
-  const handleSvcConvert = async () => {
-    if (!vocalsId) {
-      setStatus(AppStatus.ERROR)
-      setErrorMsg('请先上传音频并完成预处理。')
-      return
-    }
-    if (!promptText.trim()) {
-      setStatus(AppStatus.ERROR)
-      setErrorMsg('请先输入目标风格描述。')
+  const handleUpload = async () => {
+    if (!inputAudio) {
       return
     }
 
-    setStatus(AppStatus.CONVERTING)
-    setTaskStatusMsg('正在创建 So-VITS-SVC 任务…')
-    setTaskSnapshot(null)
-    setErrorMsg(null)
-    clearStyleEvidenceState()
-
-    try {
-      const response = await axios.post('/api/v1/convert', {
-        vocals_id: vocalsId,
-        prompt_text: promptText,
-        style_prompt: promptText,
-        style_strength: styleStrength,
-        model_preset_id: modelPresetId,
-        transpose,
-        f0_method: f0Method,
-        auto_predict_f0: autoPredictF0,
-        slice_db: sliceDb,
-        clip_seconds: clipSeconds,
-        pad_seconds: padSeconds,
-        allow_preset_fallback: allowPresetFallback,
-        engine: 'sovits',
-      })
-      const taskId = response.data?.task_id as string | undefined
-      if (!taskId) {
-        throw new Error('后端未返回 task_id。')
-      }
-      const payload = await pollTask(taskId)
-      completeWithBlob(payload)
-    } catch (err: unknown) {
-      setStatus(AppStatus.ERROR)
-      setErrorMsg(formatConversionError(err, 'SVC 转换失败。'))
-    }
-  }
-
-  const handleExtractFeatures = async () => {
-    if (!inputAudio?.file) {
-      setStatus(AppStatus.ERROR)
-      setErrorMsg('请先上传音频。')
-      return
-    }
-
-    setTaskStatusMsg('正在提取 StyleSinger 四维特征…')
-    setErrorMsg(null)
+    setStatus(AppStatus.UPLOADING)
+    setStatusMessage('正在上传音频并进行输入检查...')
+    setErrorMessage(null)
+    setErrorDetails(null)
 
     try {
       const formData = new FormData()
       formData.append('audio', inputAudio.file)
-      formData.append('prompt_text', promptText)
-      formData.append('style_prompt', promptText)
-      formData.append('is_vocal_only', String(isVocalOnly))
-
-      const response = await axios.post('/api/v1/extract_features', formData)
+      const response = await axios.post<UploadResponse>('/api/v1/upload', formData)
       const data = response.data ?? {}
-      setPhSeq(data.ph ?? '')
-      setNoteSeq(data.note ?? '')
-      setNoteDurSeq(data.note_dur ?? '')
-      setNoteTypeSeq(data.note_type ?? '')
-      setFeatureSource(data.source ?? data.features?.source ?? 'auto')
-      setFeatureDebugArtifacts((data.debug_artifacts as DebugArtifacts | undefined) ?? null)
-      setFeatureQualityMessage(typeof data.quality_reason === 'string' ? data.quality_reason : null)
-      setTaskStatusMsg('StyleSinger 实验特征已回填。')
-    } catch (err: unknown) {
-      setStatus(AppStatus.ERROR)
-      setErrorMsg(readAxiosMessage(err, '四维特征提取失败。'))
+      if (!data.vocals_id) {
+        throw new Error('后端未返回 vocals_id。')
+      }
+      setUploadInfo(data)
+      setVocalsId(data.vocals_id)
+      setStatus(AppStatus.UPLOADED)
+      setStatusMessage('上传成功，已可开始风格转换。')
+    } catch (error) {
+      setStatus(AppStatus.FAILED)
+      setErrorMessage(readAxiosMessage(error, '上传失败，请检查后端服务。'))
     }
   }
 
-  const handleStyleSingerConvert = async () => {
-    if (!inputAudio?.file) {
-      setStatus(AppStatus.ERROR)
-      setErrorMsg('请先上传音频。')
-      return
-    }
-    if (!promptText.trim()) {
-      setStatus(AppStatus.ERROR)
-      setErrorMsg('高级模式也需要风格描述。')
+  const handleConvert = async () => {
+    if (!vocalsId) {
+      setStatus(AppStatus.FAILED)
+      setErrorMessage('请先完成上传。')
       return
     }
 
+    if (!promptText.trim()) {
+      setStatus(AppStatus.FAILED)
+      setErrorMessage('请输入风格提示词。')
+      return
+    }
+
+    clearResultState()
     setStatus(AppStatus.CONVERTING)
-    setTaskStatusMsg('正在创建 StyleSinger 高级实验任务…')
-    setTaskSnapshot(null)
-    setErrorMsg(null)
-    clearStyleEvidenceState()
+    setStatusMessage('正在创建转换任务...')
 
     try {
-      const formData = new FormData()
-      formData.append('text', promptText)
-      formData.append('prompt_text', promptText)
-      formData.append('style_prompt', promptText)
-      formData.append('style_strength', styleStrength.toString())
-      formData.append('ph_seq', phSeq)
-      formData.append('note_seq', noteSeq)
-      formData.append('note_dur_seq', noteDurSeq)
-      formData.append('note_type_seq', noteTypeSeq)
-      formData.append('is_vocal_only', String(isVocalOnly))
-      formData.append('ref_audio', inputAudio.file)
+      const response = await axios.post<ConvertResponse>('/api/v1/convert', {
+        vocals_id: vocalsId,
+        prompt_text: promptText,
+        style_prompt: promptText,
+        model_preset_id: modelPresetId,
+        engine: 'sovits',
+      })
 
-      const response = await axios.post('/api/v1/tasks', formData)
-      const taskId = response.data?.task_id as string | undefined
-      if (!taskId) {
+      const createdTaskId = response.data?.task_id
+      if (!createdTaskId) {
         throw new Error('后端未返回 task_id。')
       }
-      const payload = await pollTask(taskId)
-      completeWithBlob(payload)
-    } catch (err: unknown) {
-      setStatus(AppStatus.ERROR)
-      setErrorMsg(readAxiosMessage(err, 'StyleSinger 高级模式转换失败。'))
+
+      setTaskId(createdTaskId)
+      setTaskStatus('queued')
+      setTaskStage('queued')
+      setStatusMessage(`任务 ${createdTaskId} 已创建，正在排队...`)
+
+      const completed = await pollTask(createdTaskId, (update) => {
+        setTaskStatus(update.status)
+        setTaskStage(update.stage)
+        setTaskProgress(update.progress)
+        if (update.message) {
+          setStatusMessage(update.message)
+        }
+      })
+      const mergedMetadata = normalizeResultMetadata(completed)
+      const resultUrl = completed.result_url || `/api/v1/tasks/${createdTaskId}/result`
+      const downloadResponse = await axios.get(`/api/v1/tasks/${createdTaskId}/result`, { responseType: 'blob' })
+      const outputAudioUrl = window.URL.createObjectURL(downloadResponse.data as Blob)
+
+      const nextResult: ProcessingResult = {
+        taskId: createdTaskId,
+        inputAudioUrl: inputAudio?.url ?? null,
+        outputAudioUrl,
+        resultUrl,
+        downloadUrl: outputAudioUrl,
+        metadata: {
+          ...mergedMetadata,
+          task_id: mergedMetadata.task_id ?? createdTaskId,
+          result_url: mergedMetadata.result_url ?? resultUrl,
+          style_prompt: mergedMetadata.style_prompt ?? promptText,
+        },
+      }
+
+      setResult(nextResult)
+      setStatus(AppStatus.SUCCEEDED)
+      setTaskStatus('succeeded')
+      setTaskStage('completed')
+      setTaskProgress(100)
+      setStatusMessage('转换成功，结果已生成。')
+
+      const styleRequest = buildStyleEvidenceRequest(nextResult.metadata, promptText, modelPresetId)
+      setStyleEvidenceRequest(styleRequest)
+    } catch (error) {
+      setStatus(AppStatus.FAILED)
+      setTaskStatus('failed')
+      setTaskStage('failed')
+      setTaskProgress(100)
+      if (error instanceof TaskFailureError) {
+        setErrorMessage(error.message)
+        setErrorDetails(error.detailText)
+      } else {
+        setErrorMessage(readAxiosMessage(error, '转换失败。'))
+      }
     }
   }
 
-  const appendPromptTag = (tag: string) => {
-    clearStyleEvidenceState()
-    setPromptText((current) => {
-      const trimmed = current.trim()
-      if (!trimmed) {
-        return tag
-      }
-      const parts = trimmed.split('、').map((item) => item.trim())
-      if (parts.includes(tag)) {
-        return current
-      }
-      return `${trimmed}、${tag}`
-    })
-  }
+  const convertButtonLabel = getConvertButtonLabel({
+    inputAudio,
+    vocalsId,
+    promptText,
+    isConverting,
+  })
 
-  const resetApp = () => {
-    if (inputAudio?.url) {
-      window.URL.revokeObjectURL(inputAudio.url)
-    }
-    if (result?.convertedUrl) {
-      window.URL.revokeObjectURL(result.convertedUrl)
-    }
-    setPromptText('')
-    setStyleStrength(0.65)
-    setTranspose(0)
-    setF0Method(sovitsCheck?.f0_method || 'rmvpe')
-    setAutoPredictF0(Boolean(sovitsCheck?.auto_predict_f0))
-    setSliceDb(typeof sovitsCheck?.slice_db === 'number' ? sovitsCheck.slice_db : -40)
-    setClipSeconds(typeof sovitsCheck?.clip_seconds === 'number' ? sovitsCheck.clip_seconds : 0)
-    setPadSeconds(typeof sovitsCheck?.pad_seconds === 'number' ? sovitsCheck.pad_seconds : 0.5)
-    setAllowPresetFallback(false)
-    setModelPresetId(systemHealth?.svc_model_presets?.active_preset_id || 'final_primary')
-    setIsVocalOnly(false)
-    setUploadedVocalOnly(null)
-    setAdvancedParamsOpen(false)
-    setTechDetailsOpen(false)
-    setStyleSingerOpen(false)
-    setPhSeq('')
-    setNoteSeq('')
-    setNoteDurSeq('')
-    setNoteTypeSeq('')
-    setFeatureSource(null)
-    setFeatureDebugArtifacts(null)
-    setFeatureQualityMessage(null)
-    setStatus(AppStatus.IDLE)
-    setInputAudio(null)
-    setVocalsId(null)
-    setTaskStatusMsg(null)
-    setErrorMsg(null)
-    setResult(null)
-    setSelectedStyle(null)
-    setTaskSnapshot(null)
-    setInputQuality(null)
-    clearStyleEvidenceState()
-  }
+  const progressPercent = Math.max(0, Math.min(100, taskProgress))
+  const metadata = result?.metadata
 
   return (
-    <ErrorBoundary>
-      <div className="app-shell" translate="no">
-        <main className="page-frame">
-          <section className="hero-panel">
-            <div className="hero-copy">
-              <div className="hero-kicker">v1.1 真实多风格 preset 接入工作台</div>
-              <h1>基于文本提示词控制的歌声风格转换系统</h1>
-              <p>
-                默认主链路为歌声转换模型（So-VITS-SVC）。当前默认模型为 <strong>final_primary / lain</strong>，
-                Redis 作为内存数据库与消息中间件，Celery 负责真实异步任务；StyleSinger 仅保留为高级实验模式，
-                不是默认内容保持型 SVC。
-              </p>
-            </div>
-            <div className="hero-badges">
-              <StatusBadge label={mockMode ? '模拟 SVC' : '真实 SVC'} tone={mockMode ? 'warning' : 'success'} />
-              <StatusBadge
-                label={effectiveTaskBackendMode === 'celery' ? '异步任务 / Redis' : '本地任务'}
-                tone={effectiveTaskBackendMode === 'celery' ? 'success' : 'neutral'}
+    <div className="app-shell" translate="no">
+      <main className="app-container" data-testid="main-container">
+        <header className="hero-card">
+          <div>
+            <h1>基于文本提示词控制的歌声风格转换系统</h1>
+            <p>
+              上传干声音频，输入目标风格提示词，系统通过 So-VITS-SVC 与 internal_film 条件注入生成转换结果。
+            </p>
+          </div>
+          <section className="status-card" aria-label="系统状态">
+            <h2>系统状态</h2>
+            <div className="status-list">
+              <StatusRow label="Real SVC" value={statusLabel(isRealSvc, '未检测')} tone={toneFromBoolean(isRealSvc)} />
+              <StatusRow
+                label="Internal FiLM"
+                value={conditionMode === 'internal_film' ? '已启用' : conditionMode || '未检测'}
+                tone={conditionMode === 'internal_film' ? 'success' : 'warning'}
               />
-              <StatusBadge
-                label={
-                  gpuStatus === 'visible'
-                    ? 'GPU 可见'
-                    : gpuStatus === 'missing'
-                      ? 'GPU 不可见'
-                      : 'GPU 未检测'
+              <StatusRow
+                label="Trained Adapter"
+                value={valueOrFallback(metadata?.text_style_adapter_loaded, '未检测')}
+                tone={
+                  metadata?.text_style_adapter_loaded === true
+                    ? 'success'
+                    : metadata?.text_style_adapter_loaded === false
+                      ? 'warning'
+                      : 'neutral'
                 }
-                tone={gpuStatus === 'visible' ? 'success' : gpuStatus === 'missing' ? 'warning' : 'neutral'}
               />
-              <StatusBadge
-                label={
-                  backendConditionMode === 'internal_film'
-                    ? currentResultMetadata?.executed_internal_film
-                      ? 'Internal FiLM 已执行'
-                      : 'Internal FiLM 已接入'
-                    : '内部注入已关闭'
-                }
-                tone={backendConditionMode === 'internal_film' ? 'success' : 'neutral'}
+              <StatusRow
+                label="GPU/Model Ready"
+                value={gpuModelReadyLabel(gpuReady, modelReady)}
+                tone={gpuReady && modelReady ? 'success' : gpuReady === null && modelReady === null ? 'neutral' : 'warning'}
               />
             </div>
           </section>
+        </header>
 
-          <section className="surface-card">
-            <div className="section-header">
-              <div>
-                <div className="section-kicker">正式演示</div>
-                <h2>正式演示工作台</h2>
-                <p>左侧准备输入与风格提示，右侧查看任务状态并启动默认 SVC 转换。</p>
+        <section className="main-grid">
+          <div className="left-column" data-testid="input-card">
+            <article className="card">
+              <div className="card-header">
+                <h2>上传音频</h2>
+                <span className="badge badge-neutral">/api/v1/upload</span>
               </div>
-              {(inputAudio || result) && (
-                <button type="button" className="secondary-button" onClick={resetApp} disabled={isUploading || isConverting}>
-                  重置演示
-                </button>
-              )}
-            </div>
+              <FileUpload
+                onFileSelect={handleFileSelect}
+                onError={(message) => {
+                  setStatus(AppStatus.FAILED)
+                  setErrorMessage(message)
+                }}
+                disabled={isUploading || isConverting}
+              />
 
-            <div className="workspace-grid">
-              <div className="workspace-left">
-                <article className="subcard">
-                  <div className="subcard-header">
-                    <h3>上传音频</h3>
-                    <span className="subcard-tag">/api/v1/upload</span>
+              {inputAudio ? (
+                <div className="file-summary">
+                  <FieldRow label="文件名" value={inputAudio.name} />
+                  <FieldRow label="大小" value={formatBytes(inputAudio.size)} />
+                  <FieldRow label="时长" value={valueOrFallback(formatSeconds(inputAudio.durationSeconds), '检测中')} />
+                  <FieldRow label="格式" value={formatMimeType(inputAudio.mimeType, inputAudio.name)} />
+                  <FieldRow label="上传状态" value={uploadStatusLabel(status)} />
+                </div>
+              ) : null}
+
+              {uploadInfo ? (
+                <div className="file-summary">
+                  <FieldRow label="vocals_id" value={valueOrFallback(uploadInfo.vocals_id, '未返回')} />
+                  <FieldRow label="input_url" value={valueOrFallback(uploadInfo.input_url, '未返回')} />
+                  <FieldRow label="vocals_url" value={valueOrFallback(uploadInfo.vocals_url, '未返回')} />
+                  <FieldRow label="input_audio_path" value={valueOrFallback(uploadInfo.input_audio_path, '未返回')} />
+                  <FieldRow label="input_vocals_path" value={valueOrFallback(uploadInfo.input_vocals_path, '未返回')} />
+                </div>
+              ) : null}
+
+              {uploadInfo?.input_quality_summary ? (
+                <div className="quality-card">
+                  <h3>输入质量检查</h3>
+                  <div className="meta-grid">
+                    <MetaItem label="质量等级" value={qualityLabel(uploadInfo.input_quality_summary.quality_level)} />
+                    <MetaItem label="sample_rate" value={valueOrFallback(uploadInfo.input_quality_summary.sample_rate, '未返回')} />
+                    <MetaItem label="duration" value={valueOrFallback(uploadInfo.input_quality_summary.duration, '未返回')} />
+                    <MetaItem label="silence_ratio" value={valueOrFallback(uploadInfo.input_quality_summary.silence_ratio, '未返回')} />
                   </div>
-                  {!inputAudio ? (
-                    <FileUpload onFileSelect={handleFileSelect} disabled={isUploading || isConverting} />
+                  {uploadInfo.input_quality_summary.warnings.length > 0 ? (
+                    <ul className="warning-list">
+                      {uploadInfo.input_quality_summary.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
                   ) : (
-                    <div className="uploaded-summary">
-                      <div className="uploaded-title-row">
-                        <div>
-                          <div className="uploaded-title">{inputAudio.name}</div>
-                          <div className="muted-text">{formatBytes(inputAudio.file.size)}</div>
-                        </div>
-                        <StatusBadge label={vocalsId ? '已就绪' : '处理中'} tone={vocalsId ? 'success' : 'neutral'} />
-                      </div>
-                      <label className="toggle-row">
-                        <input
-                          type="checkbox"
-                          checked={isVocalOnly}
-                          onChange={(event) => setIsVocalOnly(event.target.checked)}
-                        />
-                        <span>输入已是纯人声/干声，跳过人声分离</span>
-                      </label>
-                      {vocalsId && uploadedVocalOnly !== null && uploadedVocalOnly !== isVocalOnly && (
-                        <div className="inline-text warning-text">更改该选项将在重新上传后生效。</div>
-                      )}
-                      {isVocalOnly && (
-                        <Notice tone="warning">
-                          如果当前上传的是完整歌曲而不是干声，跳过人声分离会把伴奏一并送入 SVC，明显增加跑调、杂音和风格失真风险。
-                        </Notice>
-                      )}
-                    </div>
+                    <div className="muted-text">无明显质量风险。</div>
                   )}
+                </div>
+              ) : null}
 
-                  {inputQuality && (
-                    <div className={`quality-panel quality-${inputQuality.quality_level}`}>
-                      <div className="quality-header">
-                        <div>
-                          <div className="field-label">输入质量</div>
-                          <div className="quality-title">{formatQualityLabel(inputQuality.quality_level)}</div>
-                        </div>
-                        <StatusBadge label={qualityChipLabel(inputQuality.quality_level)} tone={qualityTone(inputQuality.quality_level)} />
-                      </div>
-                      <div className="metric-grid compact">
-                        <MetricItem label="时长" value={formatNullableNumber(inputQuality.duration, 's')} />
-                        <MetricItem label="采样率" value={formatNullableNumber(inputQuality.sample_rate, 'Hz', 0)} />
-                        <MetricItem label="声道" value={formatNullableNumber(inputQuality.channels, '', 0)} />
-                        <MetricItem label="静音比例" value={formatNullableNumber(inputQuality.silence_ratio)} />
-                      </div>
-                      {inputQuality.warnings.length > 0 ? (
-                        <div className="warning-list">
-                          {inputQuality.warnings.map((warning) => (
-                            <div key={warning} className="warning-item">
-                              <ShieldAlert className="mini-icon" />
-                              <span>{warning}</span>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="muted-text">当前输入质量没有检测到明显风险。</div>
-                      )}
-                      {inputQuality.quality_level === 'bad' && (
-                        <Notice tone="warning">输入质量较差，但不会阻止转换；建议在答辩演示前优先换用更干净的人声片段。</Notice>
-                      )}
-                    </div>
-                  )}
-                </article>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleUpload}
+                disabled={!canUpload || status === AppStatus.UPLOADED}
+              >
+                {isUploading ? '上传中...' : status === AppStatus.UPLOADED ? '已完成上传' : '上传音频'}
+              </button>
+            </article>
 
-                <article className="subcard">
-                  <div className="subcard-header">
-                    <h3>文本提示词</h3>
-                    <span className="subcard-tag">TextStyleEncoder + internal FiLM</span>
-                  </div>
-                  <label className="field-label" htmlFor="prompt-textarea">
-                    目标风格描述
-                  </label>
-                  <textarea
-                    id="prompt-textarea"
-                    aria-label="style-prompt"
-                    className="styled-textarea"
-                    value={promptText}
-                    onChange={(event) => updatePromptText(event.target.value)}
+            <article className="card">
+              <div className="card-header">
+                <h2>提示词与参数</h2>
+                <span className="badge badge-neutral">internal_film</span>
+              </div>
+
+              <label htmlFor="style-prompt" className="field-label">
+                文本风格提示词
+              </label>
+              <textarea
+                id="style-prompt"
+                className="styled-textarea"
+                placeholder="例如：温柔、明亮、流行感更强的女声风格"
+                value={promptText}
+                onChange={(event) => handlePromptChange(event.target.value)}
+                disabled={isConverting}
+              />
+              <div className="char-count">字数：{promptText.length}</div>
+
+              <div className="chip-row">
+                {STYLE_PROMPT_CHIPS.map((chip) => (
+                  <button
+                    type="button"
+                    key={chip}
+                    className="chip-button"
+                    onClick={() => handlePromptChange(chip)}
                     disabled={isConverting}
-                    placeholder="例如：清亮、少年感、带一点气声"
-                  />
-                  <div className="tag-row">
-                    {STYLE_PRESETS.map((preset) => (
-                      <button
-                        key={preset}
-                        type="button"
-                        className="tag-button"
-                        onClick={() => appendPromptTag(preset)}
-                        disabled={isConverting}
-                      >
-                        {preset}
-                      </button>
-                    ))}
-                  </div>
-                  {promptConflict && <Notice tone="warning">{promptConflict}</Notice>}
-                  {promptError && <div className="inline-text warning-text">{promptError}</div>}
-
-                  <details
-                    className="inline-details"
-                    open={advancedParamsOpen}
-                    onToggle={(event) => setAdvancedParamsOpen((event.currentTarget as HTMLDetailsElement).open)}
                   >
-                    <summary>
-                      <span>高级转换参数</span>
-                      <ChevronDown className={`summary-icon ${advancedParamsOpen ? 'open' : ''}`} />
-                    </summary>
-                    <div className="advanced-params-grid">
-                      <label className="form-field">
-                        <span className="field-label">style_strength</span>
-                        <input
-                          type="range"
-                          min="0"
-                          max="1"
-                          step="0.05"
-                          value={styleStrength}
-                          onChange={(event) => setStyleStrength(Number.parseFloat(event.target.value))}
-                          disabled={isConverting}
-                        />
-                        <span className="field-help">当前值：{styleStrength.toFixed(2)}</span>
-                      </label>
-
-                      <label className="form-field">
-                        <span className="field-label">transpose</span>
-                        <input
-                          type="number"
-                          min={-24}
-                          max={24}
-                          value={transpose}
-                          onChange={(event) => setTranspose(Number.parseInt(event.target.value || '0', 10))}
-                          disabled={isConverting}
-                          className="text-input"
-                        />
-                        <span className="field-help">单位：半音，后端继续使用现有安全校验。</span>
-                      </label>
-
-                      <label className="form-field">
-                        <span className="field-label">model_preset_id</span>
-                        <select
-                          value={modelPresetId}
-                          onChange={(event) => setModelPresetId(event.target.value)}
-                          disabled={isConverting}
-                          className="text-input"
-                        >
-                          {modelPresets.map((preset) => (
-                            <option key={preset.preset_id} value={preset.preset_id}>
-                              {formatPresetOptionLabel(preset)}
-                            </option>
-                          ))}
-                        </select>
-                        <span className="field-help">
-                          默认保持 `final_primary`；`tech_villager` 仅作为技术回退，不会被默认选中。
-                        </span>
-                        {activePreset && (
-                          <div className="preset-meta-card">
-                            <strong>{activePreset.display_name}</strong>
-                            <span>{`状态：${activePresetStatusLabel}`}</span>
-                            <span>{`speaker：${activePreset.speaker || '暂无'}`}</span>
-                            <span>{`source_repo：${activePreset.source_repo || '暂无'}`}</span>
-                            <span>{`license：${activePreset.license || 'license_unknown'}`}</span>
-                          </div>
-                        )}
-                      </label>
-
-                      <label className="form-field">
-                        <span className="field-label">f0_method</span>
-                        <select value={f0Method} onChange={(event) => setF0Method(event.target.value)} disabled={isConverting} className="text-input">
-                          <option value="rmvpe">rmvpe</option>
-                          <option value="system_default">system_default</option>
-                          <option value="harvest">harvest</option>
-                          <option value="dio">dio</option>
-                        </select>
-                        <span className="field-help">若当前环境不支持 rmvpe，系统会记录 `fallback_reason`，并回退到当前集成默认值。</span>
-                      </label>
-
-                      <label className="form-field">
-                        <span className="field-label">auto_predict_f0</span>
-                        <input type="checkbox" checked={autoPredictF0} onChange={(event) => setAutoPredictF0(event.target.checked)} disabled={isConverting} />
-                        <span className="field-help">默认 false。若当前 CLI 不支持，该参数会记录到 debug 产物但不强行透传。</span>
-                      </label>
-
-                      <label className="form-field">
-                        <span className="field-label">slice_db</span>
-                        <input
-                          type="number"
-                          min={-80}
-                          max={0}
-                          step="1"
-                          value={sliceDb}
-                          onChange={(event) => setSliceDb(Number.parseFloat(event.target.value || '-40'))}
-                          disabled={isConverting}
-                          className="text-input"
-                        />
-                      </label>
-
-                      <label className="form-field">
-                        <span className="field-label">clip_seconds</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={30}
-                          step="0.5"
-                          value={clipSeconds}
-                          onChange={(event) => setClipSeconds(Number.parseFloat(event.target.value || '0'))}
-                          disabled={isConverting}
-                          className="text-input"
-                        />
-                      </label>
-
-                      <label className="form-field">
-                        <span className="field-label">pad_seconds</span>
-                        <input
-                          type="number"
-                          min={0}
-                          max={5}
-                          step="0.1"
-                          value={padSeconds}
-                          onChange={(event) => setPadSeconds(Number.parseFloat(event.target.value || '0.5'))}
-                          disabled={isConverting}
-                          className="text-input"
-                        />
-                      </label>
-
-                      <label className="form-field">
-                        <span className="field-label">allow_preset_fallback</span>
-                        <input
-                          type="checkbox"
-                          checked={allowPresetFallback}
-                          onChange={(event) => setAllowPresetFallback(event.target.checked)}
-                          disabled={isConverting}
-                        />
-                        <span className="field-help">默认关闭。开启后仅用于演示续跑，会明确标记请求模型预设与实际使用模型预设。</span>
-                      </label>
-                    </div>
-                  </details>
-                </article>
-              </div>
-
-              <div className="workspace-right">
-                <article className="subcard task-card">
-                  <div className="subcard-header">
-                    <h3>任务状态</h3>
-                    <StatusBadge label={formatTaskStatusLabel(taskSnapshot?.status ?? status)} tone={badgeToneForStatus(taskSnapshot?.status ?? status)} />
-                  </div>
-
-                  <div className="metric-grid">
-                    <MetricItem label="任务阶段" value={getStageLabel(taskSnapshot?.stage)} />
-                    <MetricItem label="当前进度" value={`${taskProgress}%`} />
-                    <MetricItem label="任务后端" value={formatTaskBackendMode(effectiveTaskBackendMode)} />
-                    <MetricItem label="默认模型" value={`${activePreset?.preset_id ?? 'final_primary'} / ${activePreset?.speaker ?? 'lain'}`} />
-                    <MetricItem label="预设已配置" value={formatBool(currentResultMetadata?.model_preset_ready ?? activePresetConfigured)} />
-                    <MetricItem label="请求模型预设" value={String(requestedModelPresetId ?? '暂无')} />
-                    <MetricItem label="实际使用预设" value={String(effectiveModelPresetId ?? '暂无')} />
-                    <MetricItem label="发生回退" value={formatBool(presetFallbackUsed)} />
-                    <MetricItem label="f0_method" value={String(effectiveF0Method ?? 'system_default')} />
-                    <MetricItem label="auto_predict_f0" value={formatBool(effectiveAutoPredictF0)} />
-                    <MetricItem label="condition_mode" value={String(currentResultMetadata?.condition_mode ?? backendConditionMode)} />
-                  </div>
-
-                  <div className="config-summary">
-                    <SummaryPill label="style_strength" value={styleStrength.toFixed(2)} />
-                    <SummaryPill label="transpose" value={String(transpose)} />
-                    <SummaryPill label="model_preset_id" value={modelPresetId} />
-                    <SummaryPill label="f0_method" value={f0Method} />
-                    <SummaryPill label="allow_fallback" value={allowPresetFallback ? 'true' : 'false'} />
-                  </div>
-
-                  {mockMode ? (
-                    <Notice tone="warning">当前处于模拟 SVC，只适合流程演示；要展示真实效果，请确保后端返回真实 SVC 模式。</Notice>
-                  ) : (
-                    <Notice tone="success">当前目标为真实本地 So-VITS-SVC 推理，默认模型为 final_primary/lain。</Notice>
-                  )}
-
-                  {backendConditionedInferExists === false && (
-                    <Notice tone="error">当前后端缺少 conditioned internal FiLM 推理脚本，真实文本风格注入不会成功。</Notice>
-                  )}
-
-                  {unconfiguredPresetNotice && <Notice tone="warning">{unconfiguredPresetNotice}</Notice>}
-
-                  {presetFallbackUsed && (
-                    <>
-                      <Notice tone="warning">
-                        {currentResultMetadata?.preset_fallback_reason ||
-                          '当前文本提示词匹配到专用风格模型预设，但该模型预设尚未绑定可用 SVC 模型；本次已回退到 final_primary/lain，结果不代表该专用风格真实效果。'}
-                      </Notice>
-                      <Notice tone="warning">本次输出来自回退后的实际模型，不能证明请求的模型预设已接入。</Notice>
-                    </>
-                  )}
-
-                  {selectedStyleNeedsDedicatedPreset && !selectedStylePresetReady && (
-                    <Notice tone="warning">
-                      当前文本提示词匹配“{selectedStyle?.style_label ?? selectedStyle?.description ?? '目标风格'}”风格，但该风格尚未绑定可用 SVC 目标模型；当前不会伪装为该风格转换。
-                    </Notice>
-                  )}
-
-                  {selectedStyleNeedsDedicatedPreset && selectedStylePresetReady && (
-                    <Notice tone="success">当前提示词已命中专用目标模型，可针对该风格进行更有针对性的 SVC 转换。</Notice>
-                  )}
-
-                  <Notice tone="info">
-                    当前转换效果主要受目标模型、输入音频质量、F0 提取质量以及人声分离质量影响。
-                  </Notice>
-
-                  <Notice tone={backendConditionMode === 'internal_film' ? 'success' : 'warning'}>
-                    {backendConditionMode === 'internal_film'
-                      ? '默认真实链路会把文本提示词编码为 style embedding，并在 So-VITS-SVC decoder 前执行内部 Bias/Scale 调制。'
-                      : '当前后端已关闭 internal FiLM，真实推理会回退到原始 So-VITS-SVC 路径。'}
-                  </Notice>
-
-                  <Notice tone="info">提升建议：使用更匹配的目标模型、纯净干声、合适的 F0 方法与转调参数。</Notice>
-
-                  <div className="progress-track" aria-hidden="true">
-                    <div className="progress-fill" style={{ width: `${taskProgress}%` }} />
-                  </div>
-
-                  <div className="task-message">{taskSnapshot?.message || taskStatusMsg || '等待上传音频并输入提示词。'}</div>
-
-                  {errorMsg && <div className="error-banner">{errorMsg}</div>}
-
-                  {result?.convertedUrl && (
-                    <div className="detail-section">
-                      <div className="field-label">转换结果摘要</div>
-                      <div className="metric-grid compact">
-                        <MetricItem label="condition_mode" value={String(currentResultMetadata?.condition_mode ?? backendConditionMode)} />
-                        <MetricItem
-                          label="style_prompt"
-                          value={String(currentResultMetadata?.style_prompt ?? (promptText || '暂无'))}
-                        />
-                        <MetricItem label="film_strength" value={formatNullableNumber(currentResultMetadata?.film_strength ?? backendFilmStrength)} />
-                        <MetricItem label="executed_internal_film" value={formatBool(currentResultMetadata?.executed_internal_film)} />
-                        <MetricItem
-                          label="conditioning_report"
-                          value={String(currentResultMetadata?.conditioning_report_path ?? '未生成')}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <button type="button" className="primary-button" onClick={handleSvcConvert} disabled={!canStartConversion}>
-                    {isConverting ? '转换中…' : status === AppStatus.COMPLETED ? '再次转换' : '开始转换'}
+                    {chip}
                   </button>
-                </article>
+                ))}
               </div>
-            </div>
-          </section>
 
-          <section className="surface-card">
-            <div className="section-header">
-              <div>
-                <div className="section-kicker">音频对比</div>
-                <h2>A/B 波形对比</h2>
-                <p>上传成功后显示原始音频波形，转换成功后自动补齐转换波形，并提供统一播放控制。</p>
-              </div>
-            </div>
-            <AudioComparePanel
-              originalUrl={result?.originalUrl || inputAudio?.url || null}
-              convertedUrl={result?.convertedUrl || null}
-              originalLabel={inputAudio?.name ? `原始音频 · ${inputAudio.name}` : '原始音频'}
-              convertedLabel={
-                result?.convertedUrl
-                  ? `转换结果 · ${currentResultMetadata?.model_preset_id ?? modelPresetId}`
-                  : '转换音频'
-              }
-              downloadUrl={result?.convertedUrl || null}
-              downloadFilename={`converted_${basenamePath(inputAudio?.name || 'result.wav')}`}
-            />
-          </section>
-
-          {(styleEvidenceLoading || styleEvidenceError || styleEvidence) && (
-            <section className="surface-card">
-              {styleEvidenceLoading ? (
-                <div className="notice-card notice-info">正在分析转换前后风格证据...</div>
-              ) : null}
-              {styleEvidenceError ? <div className="notice-card notice-warning">{styleEvidenceError}</div> : null}
-              {styleEvidence ? (
-                <StyleEvidencePanel
-                  analysis={styleEvidence}
-                  promptText={promptText}
-                  fallbackNotice={
-                    presetFallbackUsed ? '本次输出来自回退后的实际模型，不能证明请求的模型预设已接入。' : null
-                  }
-                />
-              ) : null}
-            </section>
-          )}
-
-          <details
-            className="surface-card details-shell"
-            open={techDetailsOpen}
-            onToggle={(event) => setTechDetailsOpen((event.currentTarget as HTMLDetailsElement).open)}
-          >
-            <summary className="details-summary">
-              <div>
-                <div className="section-kicker">技术详情</div>
-                <h2>查看技术详情</h2>
-                <p>这里集中放文本风格适配器、音频质量摘要、GPU运行证据记录和高级实验入口，不干扰主演示流程。</p>
-              </div>
-              <ChevronDown className={`summary-icon ${techDetailsOpen ? 'open' : ''}`} />
-            </summary>
-
-            <div className="details-grid">
-              <article className="detail-card">
-                <div className="detail-card-header">
-                  <Sparkles className="detail-icon" />
-                  <h3>文本风格适配器与模型说明</h3>
+              <div className="quality-card">
+                <h3>高级参数（只读）</h3>
+                <div className="meta-grid">
+                  <MetaItem label="condition_mode" value={valueOrFallback(conditionMode, '未返回')} />
+                  <MetaItem label="film_strength" value={valueOrFallback(formatFilmStrength(filmStrength), '未返回')} />
+                  <MetaItem label="preset" value={modelPresetId} />
+                  <MetaItem label="speaker" value={speaker || DEFAULT_SPEAKER} />
                 </div>
-                <p className="muted-text">
-                  当前主链路默认启用 internal FiLM。TextStyleAdapter 仍负责提示词到 preset/参数的辅助映射，真正的网络内部 Bias/Scale 注入发生在 So-VITS-SVC decoder 前。
-                </p>
-                <div className="metric-grid compact">
-                  <MetricItem label="condition_mode" value={String(currentResultMetadata?.condition_mode ?? 'internal_film')} />
-                  <MetricItem label="内部注入已执行" value={formatBool(currentResultMetadata?.executed_internal_film)} />
-                  <MetricItem label="film_target" value={String(currentResultMetadata?.film_target ?? 'pre_decoder')} />
-                  <MetricItem label="film_strength" value={formatNullableNumber(currentResultMetadata?.film_strength)} />
-                  <MetricItem label="adapter_mode" value={formatAdapterMode(currentResultMetadata?.adapter_mode)} />
-                  <MetricItem label="adapter_version" value={String(currentResultMetadata?.adapter_version ?? '待任务结果')} />
-                  <MetricItem label="文本编码状态" value={formatTextEncodingStatus(currentResultMetadata)} />
-                  <MetricItem label="实际风格强度" value={formatNullableNumber(currentResultMetadata?.effective_style_strength ?? styleStrength)} />
+              </div>
+
+              <button type="button" className="primary-button" onClick={handleConvert} disabled={!canConvert}>
+                {convertButtonLabel}
+              </button>
+            </article>
+          </div>
+
+          <div className="right-column" data-testid="result-card">
+            <article className="card" role="status" aria-live="polite">
+              <div className="card-header">
+                <h2>任务进度</h2>
+                <span className={`badge ${taskStatusBadgeClass(status, taskStatus)}`}>{taskStatusText(status, taskStatus)}</span>
+              </div>
+              <div className="task-info-grid">
+                <MetaItem label="task_id" value={valueOrFallback(taskId, '未创建')} />
+                <MetaItem label="status" value={valueOrFallback(taskStatus, status)} />
+                <MetaItem label="stage" value={valueOrFallback(taskStage, '等待中')} />
+                <MetaItem label="progress" value={`${progressPercent}%`} />
+              </div>
+              <div className="task-message">{statusMessage}</div>
+
+              <div className="progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}>
+                <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
+              </div>
+
+              {isConverting ? <StageSteps currentStage={taskStage} /> : null}
+            </article>
+
+            <article className="card">
+              <div className="card-header">
+                <h2>转换结果</h2>
+                <span className="badge badge-neutral">结果面板</span>
+              </div>
+
+              {status === AppStatus.IDLE || status === AppStatus.FILE_SELECTED || status === AppStatus.UPLOADING || status === AppStatus.UPLOADED ? (
+                <div className="empty-state">转换结果将在这里显示</div>
+              ) : null}
+
+              {status === AppStatus.CONVERTING ? (
+                <div className="empty-state">任务进行中，请等待后端返回结果。</div>
+              ) : null}
+
+              {status === AppStatus.FAILED ? (
+                <div className="error-box" role="alert">
+                  <strong>转换失败</strong>
+                  <div>{valueOrFallback(errorMessage, '未返回错误信息')}</div>
+                  {errorDetails ? <div className="muted-text">{errorDetails}</div> : null}
                 </div>
-                {selectedStyle ? (
-                  <div className="selected-style-card">
-                    <div className="field-label">匹配风格说明</div>
-                    <div className="style-reason">{String(selectedStyle.reason ?? '暂无风格匹配说明。')}</div>
-                    <div className="config-summary">
-                      <SummaryPill label="style_id" value={String(selectedStyle.style_id ?? 'n/a')} />
-                      <SummaryPill label="preset" value={String(selectedStyle.model_preset_id ?? currentResultMetadata?.model_preset_id ?? 'n/a')} />
-                      <SummaryPill label="transpose" value={String(selectedStyle.transpose ?? transpose)} />
-                      <SummaryPill
-                        label="专用模型"
-                        value={selectedStyle.current_style_has_dedicated_model ? (selectedStyle.model_preset_ready ? 'ready' : 'missing') : 'baseline'}
+              ) : null}
+
+              {status === AppStatus.SUCCEEDED && result ? (
+                <>
+                  <div className="success-box">
+                    <strong>转换成功</strong>
+                    <audio controls src={result.outputAudioUrl} className="result-audio" />
+                    <a href={result.downloadUrl} download={`converted_${result.taskId}.wav`} className="download-button">
+                      下载输出音频
+                    </a>
+                    <div className="file-summary">
+                      <FieldRow label="result_url" value={valueOrFallback(result.resultUrl, '未返回')} />
+                      <FieldRow label="输出路径" value={valueOrFallback(result.metadata.final_output_path, '未返回')} />
+                      <FieldRow label="sample_rate" value={valueOrFallback(result.metadata.sample_rate, '未返回')} />
+                      <FieldRow label="duration_seconds" value={valueOrFallback(result.metadata.duration_seconds, '未返回')} />
+                    </div>
+                  </div>
+
+                  <div className="quality-card">
+                    <h3>执行元数据</h3>
+                    <div className="meta-grid">
+                      <MetaItem label="condition_mode" value={valueOrFallback(result.metadata.condition_mode, '未返回')} />
+                      <MetaItem label="film_strength" value={valueOrFallback(result.metadata.film_strength, '未返回')} />
+                      <MetaItem
+                        label="executed_internal_film"
+                        value={valueOrFallback(result.metadata.executed_internal_film, '未返回')}
                       />
+                      <MetaItem
+                        label="text_style_adapter_loaded"
+                        value={valueOrFallback(result.metadata.text_style_adapter_loaded, '未返回')}
+                      />
+                      <MetaItem label="adapter_mode" value={valueOrFallback(result.metadata.adapter_mode, '未返回')} />
+                      <MetaItem label="adapter_type" value={valueOrFallback(result.metadata.adapter_type, '未返回')} />
+                      <MetaItem
+                        label="adapter_checkpoint"
+                        value={
+                          valueOrFallback(
+                            result.metadata.adapter_checkpoint ?? result.metadata.adapter_checkpoint_path,
+                            '未返回',
+                          )
+                        }
+                      />
+                      <MetaItem label="has_nan_or_inf" value={valueOrFallback(result.metadata.has_nan_or_inf, '未返回')} />
                     </div>
-                    <div className="muted-text">{selectedStyle.model_preset_notice ?? '当前风格匹配信息待任务结果更新。'}</div>
                   </div>
-                ) : (
-                  <div className="muted-text">完成一次任务后，会在这里显示 selected_style 与 Adapter 解释信息。</div>
-                )}
-              </article>
 
-              <article className="detail-card">
-                <div className="detail-card-header">
-                  <Wand2 className="detail-icon" />
-                  <h3>音频质量摘要</h3>
-                </div>
-                <div className="detail-section">
-                  <div className="field-label">上传输入质量</div>
-                  <div className="metric-grid compact">
-                    <MetricItem label="质量等级" value={formatQualityLabel(inputQuality?.quality_level ?? null)} />
-                    <MetricItem label="rms" value={formatNullableNumber(inputQuality?.rms)} />
-                    <MetricItem label="peak" value={formatNullableNumber(inputQuality?.peak)} />
-                    <MetricItem label="低能量片段比例" value={formatNullableNumber(inputQuality?.low_energy_ratio)} />
-                  </div>
-                </div>
-                <div className="detail-section">
-                  <div className="field-label">输出摘要</div>
-                  <div className="metric-grid compact">
-                    <MetricItem
-                      label="时长一致性"
-                      value={formatNullableNumber(currentResultMetadata?.audio_quality_summary?.duration_consistency)}
-                    />
-                    <MetricItem
-                      label="低能量片段比例"
-                      value={formatNullableNumber(currentResultMetadata?.audio_quality_summary?.low_energy_ratio)}
-                    />
-                    <MetricItem
-                      label="疑似断音"
-                      value={formatBool(currentResultMetadata?.audio_quality_summary?.possible_dropouts)}
-                    />
-                    <MetricItem
-                      label="报告路径"
-                      value={String(currentResultMetadata?.audio_quality_report_path ?? '待生成')}
-                    />
-                  </div>
-                </div>
-              </article>
+                  <AudioComparePanel
+                    originalUrl={result.inputAudioUrl}
+                    convertedUrl={result.outputAudioUrl}
+                    originalLabel={result.inputAudioUrl ? '输入音频' : '输入音频不可预览'}
+                    convertedLabel="输出音频"
+                    downloadUrl={result.downloadUrl}
+                    downloadFilename={`converted_${result.taskId}.wav`}
+                  />
 
-              <article className="detail-card">
-                <div className="detail-card-header">
-                  <Cpu className="detail-icon" />
-                  <h3>GPU运行证据记录</h3>
-                </div>
-                <div className="metric-grid compact">
-                  <MetricItem label="device" value={String(currentResultMetadata?.device ?? sovitsCheck?.SOVITS_DEVICE ?? '未检测')} />
-                  <MetricItem label="torch cuda" value={formatBool(sovitsCheck?.torch_cuda_available)} />
-                  <MetricItem label="backend" value={formatTaskBackendMode(effectiveTaskBackendMode)} />
-                  <MetricItem label="模型展示名" value={String(currentResultMetadata?.model_display_name ?? activePreset?.display_name ?? '待任务结果')} />
-                </div>
-                <div className="path-box">{currentResultMetadata?.gpu_telemetry_debug_path ?? '任务完成后将在这里显示 GPU运行证据记录路径。'}</div>
-                <div className="muted-text">GPU 证据请以 `gpu_telemetry.txt` 与 `sovits_command.txt` 为准，不直接把调试 JSON 暴露到主演示区。</div>
-              </article>
-            </div>
-
-            <details
-              className="nested-details"
-              open={styleSingerOpen}
-              onToggle={(event) => setStyleSingerOpen((event.currentTarget as HTMLDetailsElement).open)}
-            >
-              <summary>
-                <div>
-                  <h3>StyleSinger 高级实验模式</h3>
-                  <p>非默认内容保持型 SVC，仅用于元数据 / 四维特征实验，不替代当前 So-VITS-SVC 主链路。</p>
-                </div>
-                <ChevronDown className={`summary-icon ${styleSingerOpen ? 'open' : ''}`} />
-              </summary>
-              <div className="nested-content">
-                <div className="button-row">
-                  <button type="button" className="secondary-button" onClick={handleExtractFeatures} disabled={!inputAudio || isConverting || isUploading}>
-                    提取特征
-                  </button>
-                  <button type="button" className="secondary-button" onClick={handleStyleSingerConvert} disabled={!inputAudio || isConverting || isUploading}>
-                    使用 StyleSinger 高级模式转换
-                  </button>
-                </div>
-                {featureSource && <Notice tone="info">特征来源：{featureSource}</Notice>}
-                {featureQualityMessage && <Notice tone="warning">{featureQualityMessage}</Notice>}
-                <div className="feature-grid">
-                  <FeatureField label="ph" value={phSeq} />
-                  <FeatureField label="note" value={noteSeq} />
-                  <FeatureField label="note_dur" value={noteDurSeq} />
-                  <FeatureField label="note_type" value={noteTypeSeq} />
-                </div>
-                {featureDebugArtifacts && (
-                  <div className="link-row">
-                    {featureDebugArtifacts.extracted_features ? (
-                      <a href={featureDebugArtifacts.extracted_features} target="_blank" rel="noreferrer">
-                        下载 extracted_features.json
-                      </a>
-                    ) : null}
-                    {featureDebugArtifacts.quality_report ? (
-                      <a href={featureDebugArtifacts.quality_report} target="_blank" rel="noreferrer">
-                        下载 quality_report.json
-                      </a>
-                    ) : null}
-                  </div>
-                )}
-              </div>
-            </details>
-          </details>
-        </main>
-      </div>
-    </ErrorBoundary>
+                  {styleEvidenceLoading ? <div className="warning-box">正在分析转换前后风格证据...</div> : null}
+                  {styleEvidenceWarning ? <div className="warning-box">{styleEvidenceWarning}</div> : null}
+                  {styleEvidence ? <StyleEvidencePanel analysis={styleEvidence} promptText={promptText} /> : null}
+                </>
+              ) : null}
+            </article>
+          </div>
+        </section>
+      </main>
+    </div>
   )
 }
 
-function StatusBadge({
+function StageSteps({ currentStage }: { currentStage: string }) {
+  const steps = ['uploaded', 'text_encoded', 'adapter_applied', 'inference_running', 'completed']
+  const labels: Record<string, string> = {
+    uploaded: '上传完成',
+    text_encoded: '文本编码',
+    adapter_applied: 'Adapter',
+    inference_running: 'Internal FiLM + So-VITS-SVC 推理',
+    completed: '输出生成',
+  }
+
+  const currentIndex = stepIndex(currentStage)
+
+  return (
+    <ol className="stage-list">
+      {steps.map((step, index) => {
+        const done = currentIndex >= index
+        return (
+          <li key={step} className={done ? 'stage-item stage-done' : 'stage-item'}>
+            <span className="stage-dot" aria-hidden="true" />
+            <span>{labels[step]}</span>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+function StatusRow({
   label,
+  value,
   tone,
 }: {
   label: string
-  tone: 'primary' | 'success' | 'warning' | 'neutral' | 'danger'
+  value: string
+  tone: 'success' | 'warning' | 'error' | 'neutral'
 }) {
-  return <span className={`status-badge status-badge-${tone}`}>{label}</span>
-}
-
-function Notice({
-  tone,
-  children,
-}: {
-  tone: 'success' | 'warning' | 'error' | 'info'
-  children: ReactNode
-}) {
-  return <div className={`notice notice-${tone}`}>{children}</div>
-}
-
-function MetricItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="metric-item">
+    <div className="status-row">
+      <span>{label}</span>
+      <span className={`badge badge-${tone}`}>{value}</span>
+    </div>
+  )
+}
+
+function FieldRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="field-row">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
   )
 }
 
-function SummaryPill({ label, value }: { label: string; value: string }) {
+function MetaItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="summary-pill">
+    <div className="meta-item">
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
   )
 }
 
-function FeatureField({ label, value }: { label: string; value: string }) {
-  return (
-    <label className="feature-field">
-      <span className="field-label">{label}</span>
-      <textarea readOnly value={value} className="feature-textarea" />
-    </label>
-  )
+class TaskFailureError extends Error {
+  detailText: string
+
+  constructor(message: string, detailText: string) {
+    super(message)
+    this.name = 'TaskFailureError'
+    this.detailText = detailText
+  }
+}
+
+async function pollTask(taskId: string, onUpdate: (update: TaskUpdate) => void): Promise<TaskResponse> {
+  for (let attempt = 0; attempt < 180; attempt += 1) {
+    const response = await axios.get<TaskResponse>(`/api/v1/tasks/${taskId}`)
+    const data = response.data ?? {}
+    onUpdate({
+      status: typeof data.status === 'string' ? data.status : 'running',
+      stage: typeof data.stage === 'string' ? data.stage : '',
+      progress: typeof data.progress === 'number' ? Math.max(0, Math.min(100, data.progress)) : 0,
+      message: typeof data.message === 'string' ? data.message : '',
+    })
+
+    if (data.status === 'failed') {
+      const parsed = parseTaskError(data)
+      throw new TaskFailureError(parsed.message, parsed.details)
+    }
+
+    if (data.status === 'succeeded') {
+      if (!data.result_url) {
+        throw new TaskFailureError('任务状态为 succeeded，但 result_url 缺失。', JSON.stringify(data.error ?? {}, null, 2))
+      }
+      return data
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+  }
+
+  throw new TaskFailureError('任务超时，请重试。', '轮询超时：超过 180 秒未完成。')
+}
+
+function parseTaskError(task: TaskResponse): { message: string; details: string } {
+  const error = task.error
+  if (typeof error === 'string') {
+    return { message: error, details: error }
+  }
+  if (error && typeof error === 'object') {
+    const maybeCode = typeof error.code === 'string' ? error.code : null
+    const maybeMessage = typeof error.message === 'string' ? error.message : null
+    const maybeDetails = error.details && typeof error.details === 'object' ? JSON.stringify(error.details) : '未返回 details'
+    return {
+      message: maybeMessage || maybeCode || task.message || '转换失败',
+      details: maybeDetails,
+    }
+  }
+  return {
+    message: task.message || '转换失败',
+    details: '后端未返回错误详情。',
+  }
+}
+
+function normalizeResultMetadata(taskData: TaskResponse): ResultMetadata {
+  const raw = (taskData.result_metadata ?? taskData.engine_details ?? {}) as Record<string, unknown>
+  return {
+    task_id: readString(raw.task_id ?? taskData.task_id),
+    status: readString(raw.status ?? taskData.status),
+    result_url: readString(raw.result_url ?? taskData.result_url),
+    download_url: readString(raw.download_url ?? taskData.download_url),
+    input_url: readString(raw.input_url ?? taskData.input_url),
+    output_url: readString(raw.output_url ?? taskData.output_url),
+    warning: readString(raw.warning ?? taskData.warning),
+    condition_mode: readString(raw.condition_mode),
+    film_strength: readNumber(raw.film_strength),
+    executed_internal_film: readBoolean(raw.executed_internal_film),
+    text_style_adapter_loaded: readBoolean(raw.text_style_adapter_loaded ?? raw.adapter_enabled),
+    adapter_mode: readString(raw.adapter_mode),
+    adapter_type: readString(raw.adapter_type),
+    adapter_checkpoint: readString(raw.adapter_checkpoint),
+    adapter_checkpoint_path: readString(raw.adapter_checkpoint_path),
+    style_prompt: readString(raw.style_prompt),
+    sample_rate: readNumber(raw.sample_rate),
+    duration_seconds: readNumber(raw.duration_seconds),
+    has_nan_or_inf: readBoolean(raw.has_nan_or_inf),
+    objective_metrics_summary: readRecord(raw.objective_metrics_summary),
+    model_preset_id: readString(raw.model_preset_id),
+    requested_model_preset_id: readString(raw.requested_model_preset_id),
+    effective_model_preset_id: readString(raw.effective_model_preset_id),
+    speaker: readString(raw.speaker),
+    input_audio_path: readString(raw.input_audio_path),
+    input_vocals_path: readString(raw.input_vocals_path),
+    final_output_path: readString(raw.final_output_path),
+    audio_quality_summary: readRecord(raw.audio_quality_summary) as ResultMetadata['audio_quality_summary'],
+    ...raw,
+  }
 }
 
 function buildStyleEvidenceRequest(
   metadata: ResultMetadata,
   promptText: string,
-  fallbackModelPresetId: string,
+  modelPresetId: string,
 ): StyleEvidenceRequest | null {
   const normalizedPrompt = promptText.trim()
-  const inputPath = metadata.input_vocals_path ?? metadata.input_audio_path ?? null
-  const outputPath = metadata.final_output_path ?? null
+  const inputPath = metadata.input_vocals_path ?? metadata.input_audio_path
+  const outputPath = metadata.final_output_path
+
   if (!normalizedPrompt || !inputPath || !outputPath) {
     return null
   }
+
   return {
     inputPath,
     outputPath,
     promptText: normalizedPrompt,
-    modelPresetId: metadata.effective_model_preset_id ?? metadata.model_preset_id ?? fallbackModelPresetId,
+    modelPresetId: metadata.effective_model_preset_id ?? metadata.model_preset_id ?? modelPresetId,
   }
 }
 
-function normalizeResultMetadata(taskData?: TaskResponse | null): ResultMetadata {
-  const taskMeta = (taskData?.result_metadata ?? taskData?.engine_details ?? {}) as Record<string, unknown>
-  return {
-    inference_mode: stringOrNull(taskMeta.inference_mode ?? taskData?.inference_mode),
-    mock_enabled: coerceBoolean(taskMeta.mock_enabled ?? taskData?.mock_enabled),
-    model_path: stringOrNull(taskMeta.model_path ?? taskData?.model_path),
-    config_path: stringOrNull(taskMeta.config_path ?? taskData?.config_path),
-    model_preset_id: stringOrNull(taskMeta.model_preset_id ?? taskData?.model_preset_id),
-    requested_model_preset_id: stringOrNull(taskMeta.requested_model_preset_id ?? taskData?.requested_model_preset_id),
-    effective_model_preset_id: stringOrNull(taskMeta.effective_model_preset_id ?? taskData?.effective_model_preset_id),
-    preset_fallback_used: coerceBoolean(taskMeta.preset_fallback_used ?? taskData?.preset_fallback_used),
-    preset_fallback_reason: stringOrNull(taskMeta.preset_fallback_reason ?? taskData?.preset_fallback_reason),
-    model_display_name: stringOrNull(taskMeta.model_display_name ?? taskData?.model_display_name),
-    source_repo: stringOrNull(taskMeta.source_repo ?? taskData?.source_repo),
-    source_url: stringOrNull(taskMeta.source_url ?? taskData?.source_url),
-    license: stringOrNull(taskMeta.license ?? taskData?.license),
-    install_report_path: stringOrNull(taskMeta.install_report_path ?? taskData?.install_report_path),
-    notes: stringOrNull(taskMeta.notes ?? taskData?.notes),
-    model_path_basename: stringOrNull(taskMeta.model_path_basename ?? taskData?.model_path_basename),
-    config_path_basename: stringOrNull(taskMeta.config_path_basename ?? taskData?.config_path_basename),
-    is_demo_quality: coerceBoolean(taskMeta.is_demo_quality ?? taskData?.is_demo_quality),
-    is_technical_validation_only: coerceBoolean(taskMeta.is_technical_validation_only ?? taskData?.is_technical_validation_only),
-    speaker: stringOrNull(taskMeta.speaker ?? taskData?.speaker),
-    device: stringOrNull(taskMeta.device ?? taskData?.device),
-    selected_output: stringOrNull(taskMeta.selected_output ?? taskData?.selected_output),
-    final_output_path: stringOrNull(taskMeta.final_output_path ?? taskData?.final_output_path),
-    return_code: numberOrNull(taskMeta.return_code ?? taskData?.return_code),
-    elapsed_seconds: numberOrNull(taskMeta.elapsed_seconds ?? taskData?.elapsed_seconds),
-    sovits_command_debug_path: stringOrNull(taskMeta.sovits_command_debug_path ?? taskData?.sovits_command_debug_path),
-    gpu_telemetry_debug_path: stringOrNull(taskMeta.gpu_telemetry_debug_path ?? taskData?.gpu_telemetry_debug_path),
-    task_backend_mode: stringOrNull(taskMeta.task_backend_mode ?? taskData?.task_backend_mode),
-    encoder_model_name: stringOrNull(taskMeta.encoder_model_name ?? taskData?.encoder_model_name),
-    encoder_type: stringOrNull(taskMeta.encoder_type ?? taskData?.encoder_type),
-    embedding_dim: numberOrNull(taskMeta.embedding_dim ?? taskData?.embedding_dim),
-    embedding_norm: numberOrNull(taskMeta.embedding_norm ?? taskData?.embedding_norm),
-    top_keywords: arrayOfString(taskMeta.top_keywords ?? taskData?.top_keywords),
-    text_encoding_status: stringOrNull(taskMeta.text_encoding_status ?? taskData?.text_encoding_status),
-    text_encoding_enabled: coerceBoolean(taskMeta.text_encoding_enabled ?? taskData?.text_encoding_enabled),
-    condition_mode: stringOrNull(taskMeta.condition_mode ?? taskData?.condition_mode),
-    style_prompt: stringOrNull(taskMeta.style_prompt ?? taskData?.style_prompt),
-    style_emb_path: stringOrNull(taskMeta.style_emb_path ?? taskData?.style_emb_path),
-    style_emb_format: stringOrNull(taskMeta.style_emb_format ?? taskData?.style_emb_format),
-    film_strength: numberOrNull(taskMeta.film_strength ?? taskData?.film_strength),
-    film_target: stringOrNull(taskMeta.film_target ?? taskData?.film_target),
-    executed_internal_film: coerceBoolean(taskMeta.executed_internal_film ?? taskData?.executed_internal_film),
-    called_conditioned_inference: coerceBoolean(taskMeta.called_conditioned_inference ?? taskData?.called_conditioned_inference),
-    conditioning_report_path: stringOrNull(taskMeta.conditioning_report_path ?? taskData?.conditioning_report_path),
-    adapter_enabled: coerceBoolean(taskMeta.adapter_enabled ?? taskData?.adapter_enabled),
-    adapter_mode: stringOrNull(taskMeta.adapter_mode ?? taskData?.adapter_mode),
-    adapter_version: stringOrNull(taskMeta.adapter_version ?? taskData?.adapter_version),
-    adapter_type: stringOrNull(taskMeta.adapter_type ?? taskData?.adapter_type),
-    adapter_checkpoint_path: stringOrNull(taskMeta.adapter_checkpoint_path ?? taskData?.adapter_checkpoint_path),
-    control_params_summary: objectOrNull(taskMeta.control_params_summary ?? taskData?.control_params_summary),
-    adapter_override_reason: stringOrNull(taskMeta.adapter_override_reason ?? taskData?.adapter_override_reason),
-    adapter_fallback_reason: stringOrNull(taskMeta.adapter_fallback_reason ?? taskData?.adapter_fallback_reason),
-    audio_quality_summary: objectOrNull(taskMeta.audio_quality_summary ?? taskData?.audio_quality_summary) as ResultMetadata['audio_quality_summary'],
-    audio_quality_report_path: stringOrNull(taskMeta.audio_quality_report_path ?? taskData?.audio_quality_report_path),
-    input_audio_path: stringOrNull(taskMeta.input_audio_path ?? taskData?.input_audio_path),
-    input_vocals_path: stringOrNull(taskMeta.input_vocals_path ?? taskData?.input_vocals_path),
-    text_style_adapter_notice: stringOrNull(taskMeta.text_style_adapter_notice ?? taskData?.text_style_adapter_notice),
-    called_inference_main: coerceBoolean(taskMeta.called_inference_main),
-    input_quality_summary: objectOrNull(taskMeta.input_quality_summary ?? taskData?.input_quality_summary) as InputQualitySummary | null,
-    input_quality_report_path: stringOrNull(taskMeta.input_quality_report_path ?? taskData?.input_quality_report_path),
-    effective_style_strength: numberOrNull(taskMeta.effective_style_strength),
-    f0_method: stringOrNull(taskMeta.f0_method ?? taskData?.f0_method),
-    f0_fallback_reason: stringOrNull(taskMeta.f0_fallback_reason ?? taskData?.f0_fallback_reason),
-    auto_predict_f0: coerceBoolean(taskMeta.auto_predict_f0 ?? taskData?.auto_predict_f0),
-    slice_db: numberOrNull(taskMeta.slice_db ?? taskData?.slice_db),
-    clip_seconds: numberOrNull(taskMeta.clip_seconds ?? taskData?.clip_seconds),
-    pad_seconds: numberOrNull(taskMeta.pad_seconds ?? taskData?.pad_seconds),
-    conversion_params_path: stringOrNull(taskMeta.conversion_params_path ?? taskData?.conversion_params_path),
-    conversion_params_summary: objectOrNull(taskMeta.conversion_params_summary ?? taskData?.conversion_params_summary),
-    model_preset_ready: coerceBoolean(taskMeta.model_preset_ready ?? taskData?.model_preset_ready),
-    model_preset_configured: coerceBoolean(taskMeta.model_preset_configured ?? taskData?.model_preset_configured),
-    smoke_test_passed: coerceBoolean(taskMeta.smoke_test_passed ?? taskData?.smoke_test_passed),
+function getConvertButtonLabel(args: {
+  inputAudio: AudioFile | null
+  vocalsId: string | null
+  promptText: string
+  isConverting: boolean
+}) {
+  if (args.isConverting) {
+    return '转换中...'
   }
+  if (!args.inputAudio) {
+    return '请先上传音频'
+  }
+  if (!args.vocalsId) {
+    return '请先上传音频'
+  }
+  if (!args.promptText.trim()) {
+    return '请输入风格提示词'
+  }
+  return '开始风格转换'
 }
 
-function pickPresets(collection: ModelPresetCollection | null): ModelPresetStatus[] {
-  const configured = (collection?.presets ?? []).filter((item): item is ModelPresetStatus => Boolean(item?.preset_id))
-  if (configured.length > 0) {
-    return configured
-  }
-  return [
-    {
-      preset_id: 'final_primary',
-      display_name: '当前可用默认 So-VITS-SVC 模型',
-      ready: true,
-      speaker: 'lain',
-      style_tags: ['baseline', 'demo'],
-      source_repo: 'SuCicada/Lain-so-vits-svc-4.1',
-      source_url: 'https://huggingface.co/SuCicada/Lain-so-vits-svc-4.1',
-      license: 'gpl',
-      is_configured: true,
-      is_demo_quality: true,
-      smoke_test_passed: true,
-      is_technical_validation_only: false,
-    },
-    {
-      preset_id: 'final_male_youth',
-      display_name: '少年感男声目标模型',
-      ready: false,
-      speaker: '',
-      style_tags: ['male', 'youth', 'bright'],
-      source_repo: '',
-      source_url: '',
-      license: '',
-      is_configured: false,
-      is_demo_quality: false,
-      smoke_test_passed: false,
-      is_technical_validation_only: false,
-    },
-    {
-      preset_id: 'final_male_powerful',
-      display_name: '力量感男声目标模型',
-      ready: false,
-      speaker: '',
-      style_tags: ['male', 'powerful', 'thick'],
-      source_repo: '',
-      source_url: '',
-      license: '',
-      is_configured: false,
-      is_demo_quality: false,
-      smoke_test_passed: false,
-      is_technical_validation_only: false,
-    },
-    {
-      preset_id: 'final_female_soft',
-      display_name: '温柔女声目标模型',
-      ready: false,
-      speaker: '',
-      style_tags: ['female', 'soft', 'breathy'],
-      source_repo: '',
-      source_url: '',
-      license: '',
-      is_configured: false,
-      is_demo_quality: false,
-      smoke_test_passed: false,
-      is_technical_validation_only: false,
-    },
-    {
-      preset_id: 'final_female_clear',
-      display_name: '清亮女声目标模型',
-      ready: false,
-      speaker: '',
-      style_tags: ['female', 'clear', 'bright'],
-      source_repo: '',
-      source_url: '',
-      license: '',
-      is_configured: false,
-      is_demo_quality: false,
-      smoke_test_passed: false,
-      is_technical_validation_only: false,
-    },
-    {
-      preset_id: 'tech_villager',
-      display_name: '技术验收模型：Minecraft Villager',
-      ready: true,
-      speaker: 'villager',
-      style_tags: ['technical', 'validation', 'fallback'],
-      source_repo: 'Sucial/so-vits-svc4.1-Minecraft_villager',
-      source_url: 'https://huggingface.co/Sucial/so-vits-svc4.1-Minecraft_villager',
-      license: 'cc-by-nc-sa-4.0',
-      is_configured: true,
-      is_demo_quality: false,
-      smoke_test_passed: true,
-      is_technical_validation_only: true,
-    },
-  ]
+function taskStatusText(status: AppStatus, taskStatus: string): string {
+  if (status === AppStatus.IDLE) return 'idle'
+  if (status === AppStatus.FILE_SELECTED) return 'file_selected'
+  if (status === AppStatus.UPLOADING) return 'uploading'
+  if (status === AppStatus.UPLOADED) return 'uploaded'
+  if (status === AppStatus.CONVERTING) return taskStatus || 'converting'
+  if (status === AppStatus.SUCCEEDED) return 'succeeded'
+  return 'failed'
 }
 
-function getGpuStatus(sovitsCheck: SovitsCheckResponse | null) {
-  if (!sovitsCheck) {
-    return 'unknown'
-  }
-  if (sovitsCheck.torch_cuda_available || Number(sovitsCheck.torch_device_count ?? 0) > 0) {
-    return 'visible'
-  }
-  return 'missing'
+function taskStatusBadgeClass(status: AppStatus, taskStatus: string): string {
+  if (status === AppStatus.SUCCEEDED || taskStatus === 'succeeded') return 'badge-success'
+  if (status === AppStatus.FAILED || taskStatus === 'failed') return 'badge-error'
+  if (status === AppStatus.CONVERTING || taskStatus === 'running' || taskStatus === 'queued') return 'badge-running'
+  if (status === AppStatus.UPLOADING) return 'badge-running'
+  return 'badge-neutral'
 }
 
-function formatPresetOptionLabel(preset: ModelPresetStatus) {
-  const suffix = preset.ready ? '已配置' : '未绑定模型'
-  return preset.preset_id === 'tech_villager' ? `tech_villager 技术回退 / ${suffix}` : `${preset.preset_id} / ${suffix}`
+function uploadStatusLabel(status: AppStatus): string {
+  if (status === AppStatus.UPLOADING) return '上传中'
+  if (status === AppStatus.UPLOADED || status === AppStatus.CONVERTING || status === AppStatus.SUCCEEDED) return '上传完成'
+  if (status === AppStatus.FILE_SELECTED) return '待上传'
+  if (status === AppStatus.FAILED) return '失败'
+  return '等待文件'
 }
 
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes)) {
-    return '0 B'
-  }
-  const units = ['B', 'KB', 'MB', 'GB']
-  let value = bytes
-  let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index += 1
-  }
-  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+function stepIndex(stage: string): number {
+  const normalized = stage.toLowerCase()
+  if (normalized.includes('uploaded') || normalized.includes('separated')) return 0
+  if (normalized.includes('text')) return 1
+  if (normalized.includes('adapter')) return 2
+  if (normalized.includes('inference') || normalized.includes('running')) return 3
+  if (normalized.includes('completed') || normalized.includes('quality')) return 4
+  return -1
 }
 
-function formatQualityLabel(level: string | null | undefined) {
-  if (level === 'good') {
-    return '良好'
-  }
-  if (level === 'warn') {
-    return '一般'
-  }
-  if (level === 'bad') {
-    return '较差'
-  }
-  return '待检测'
-}
-
-function qualityChipLabel(level: string) {
-  if (level === 'good') {
-    return '可直接演示'
-  }
-  if (level === 'warn') {
-    return '建议留意'
-  }
-  return '高风险'
-}
-
-function qualityTone(level: string): 'success' | 'warning' | 'danger' | 'neutral' {
-  if (level === 'good') {
-    return 'success'
-  }
-  if (level === 'warn') {
-    return 'warning'
-  }
-  if (level === 'bad') {
-    return 'danger'
-  }
+function toneFromBoolean(value: boolean | null): 'success' | 'warning' | 'error' | 'neutral' {
+  if (value === true) return 'success'
+  if (value === false) return 'warning'
   return 'neutral'
 }
 
-function formatTaskStatusLabel(status: string | null | undefined) {
-  switch ((status ?? '').toUpperCase()) {
-    case AppStatus.IDLE:
-      return '待开始'
-    case AppStatus.UPLOADING:
-      return '上传中'
-    case AppStatus.READY_TO_CONVERT:
-      return '可转换'
-    case AppStatus.CONVERTING:
-      return '转换中'
-    case AppStatus.COMPLETED:
-      return '已完成'
-    case AppStatus.ERROR:
-      return '出错'
-    case 'QUEUED':
-      return '排队中'
-    case 'RUNNING':
-      return '运行中'
-    case 'SUCCEEDED':
-      return '已完成'
-    case 'FAILED':
-      return '失败'
-    default:
-      return status || '待开始'
-  }
+function statusLabel(value: boolean | null, fallback: string): string {
+  if (value === true) return '已就绪'
+  if (value === false) return '未就绪'
+  return fallback
 }
 
-function badgeToneForStatus(status: string | null | undefined): 'primary' | 'success' | 'warning' | 'neutral' | 'danger' {
-  const normalized = (status ?? '').toUpperCase()
-  if (normalized === AppStatus.COMPLETED || normalized === 'SUCCEEDED') {
-    return 'success'
+function gpuModelReadyLabel(gpuReady: boolean | null, modelReady: boolean | null): string {
+  if (gpuReady === null && modelReady === null) {
+    return '未检测'
   }
-  if (normalized === AppStatus.ERROR || normalized === 'FAILED') {
-    return 'danger'
+  if (gpuReady && modelReady) {
+    return '已就绪'
   }
-  if (normalized === AppStatus.CONVERTING || normalized === 'RUNNING') {
-    return 'primary'
-  }
-  if (normalized === AppStatus.UPLOADING || normalized === 'QUEUED') {
-    return 'warning'
-  }
-  return 'neutral'
+  const gpuText = gpuReady === null ? 'GPU未知' : gpuReady ? 'GPU就绪' : 'GPU未就绪'
+  const modelText = modelReady === null ? '模型未知' : modelReady ? '模型就绪' : '模型未就绪'
+  return `${gpuText} / ${modelText}`
 }
 
-function getStageLabel(stage: string | null | undefined) {
-  switch (stage) {
-    case 'uploaded':
-      return '输入已准备'
-    case 'separated':
-      return '人声已就绪'
-    case 'style_selected':
-      return '风格已匹配'
-    case 'text_encoded':
-      return '文本已编码'
-    case 'adapter_applied':
-      return '文本风格适配器已应用'
-    case 'inference_running':
-      return 'SVC 推理中'
-    case 'quality_evaluated':
-      return '质量评估中'
-    case 'completed':
-      return '转换完成'
-    case 'failed':
-      return '转换失败'
-    default:
-      return stage || '等待开始'
+function valueOrFallback(value: unknown, fallback: string): string {
+  if (typeof value === 'string') {
+    return value.trim() ? value : fallback
   }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? String(value) : fallback
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'true' : 'false'
+  }
+  return fallback
 }
 
-function formatTaskBackendMode(mode: string | null | undefined) {
-  if (mode === 'celery') {
-    return '异步任务 / Redis'
+function readAxiosMessage(error: unknown, fallback: string): string {
+  const responseDetail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof responseDetail === 'string' && responseDetail.trim()) {
+    return responseDetail
   }
-  if (mode === 'local') {
-    return '本地后台任务'
-  }
-  return mode || '未检测'
-}
-
-function formatAdapterMode(mode: string | null | undefined) {
-  if (mode === 'trained') {
-    return '训练型适配器'
-  }
-  if (mode === 'rule_based') {
-    return '规则适配器'
-  }
-  return mode || '待任务结果'
-}
-
-function formatTextEncodingStatus(metadata: ResultMetadata | null | undefined) {
-  if (metadata?.text_encoding_enabled && metadata?.text_encoding_status) {
-    return metadata.text_encoding_status
-  }
-  if (metadata?.text_encoding_status) {
-    return metadata.text_encoding_status
-  }
-  return '待任务结果'
-}
-
-function formatNullableNumber(value: number | null | undefined, unit = '', digits = 4) {
-  if (typeof value !== 'number' || Number.isNaN(value)) {
-    return '暂无'
-  }
-  const formatted = digits === 0 ? value.toFixed(0) : value.toFixed(digits)
-  return unit ? `${formatted}${unit}` : formatted
-}
-
-function formatBool(value: boolean | null | undefined) {
-  if (value === true) {
-    return '是'
-  }
-  if (value === false) {
-    return '否'
-  }
-  return '暂无'
-}
-
-function detectPromptConflict(prompt: string) {
-  const normalized = prompt.trim()
-  if (!normalized) {
-    return null
-  }
-  if (normalized.includes('男声') && normalized.includes('女声')) {
-    return '提示词同时包含“男声”和“女声”，可能让风格匹配变得不稳定。'
-  }
-  return null
-}
-
-function basenamePath(path: string) {
-  const normalized = path.replace(/\\/g, '/')
-  const parts = normalized.split('/')
-  return parts[parts.length - 1] || path
-}
-
-function readAxiosMessage(error: unknown, fallback: string) {
-  const responseMessage = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-  if (typeof responseMessage === 'string' && responseMessage.trim()) {
-    return responseMessage
-  }
-  const message = (error as { message?: string })?.message
+  const message = (error as { message?: unknown })?.message
   if (typeof message === 'string' && message.trim()) {
     return message
   }
   return fallback
 }
 
-function buildTaskFailureError(taskData: TaskResponse, fallback?: string) {
-  const error = new Error(formatTaskFailureMessage(taskData, fallback)) as Error & { taskData?: TaskResponse }
-  error.taskData = taskData
-  return error
-}
-
-function formatTaskFailureMessage(taskData: TaskResponse, fallback = '转换失败') {
-  const errorPayload = objectOrNull(taskData.error)
-  const errorCode = stringOrNull(errorPayload?.code)
-  const errorMessage = stringOrNull(errorPayload?.message)
-  const details = objectOrNull(errorPayload?.details)
-  if (errorCode === 'SOVITS_MODEL_NOT_FOUND') {
-    return `模型权重缺失：${stringOrNull(details?.model_path) ?? taskData.model_path ?? '请检查 SOVITS_MODEL_PATH。'}`
-  }
-  if (errorCode === 'SOVITS_CONFIG_NOT_FOUND') {
-    return `模型 config 缺失：${stringOrNull(details?.config_path) ?? taskData.config_path ?? '请检查 SOVITS_CONFIG_PATH。'}`
-  }
-  if (errorCode === 'SOVITS_SPEAKER_NOT_IN_CONFIG') {
-    return `speaker 不存在：${stringOrNull(details?.speaker) ?? taskData.speaker ?? '当前 speaker'} 不在当前 config 的 speaker 列表中。`
-  }
-  if (errorCode === 'CONTENTVEC_PRETRAIN_NOT_FOUND') {
-    return `ContentVec / HuBERT 缺失：请补齐 checkpoint_best_legacy_500.pt，或配置 SOVITS_CONTENTVEC_PATH。`
-  }
-  if (errorCode === 'RMVPE_MODEL_NOT_FOUND') {
-    return 'RMVPE 模型缺失：请补齐 rmvpe.pt，或配置 SOVITS_RMVPE_MODEL_PATH。'
-  }
-  if (errorCode === 'SOVITS_MOCK_ENABLED') {
-    return '当前后端仍处于 Mock 模式，不能用于真实 So-VITS-SVC 转换。'
-  }
-  if (errorCode === 'SOVITS_CONDITIONED_SCRIPT_NOT_FOUND') {
-    return 'internal_film 推理脚本缺失，当前后端无法执行真实内部注入。'
-  }
-  if (errorMessage) {
-    return errorMessage
-  }
-  return taskData.message || fallback
-}
-
-function formatConversionError(error: unknown, fallback: string) {
-  const taskData = (error as { taskData?: TaskResponse } | null)?.taskData
-  if (taskData) {
-    return formatTaskFailureMessage(taskData, fallback)
-  }
-  return readAxiosMessage(error, fallback)
-}
-
-function coerceBoolean(value: unknown) {
-  return typeof value === 'boolean' ? value : null
-}
-
-function stringOrNull(value: unknown) {
+function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null
 }
 
-function numberOrNull(value: unknown) {
+function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-function arrayOfString(value: unknown) {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : null
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null
 }
 
-function objectOrNull(value: unknown) {
+function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null
+}
+
+async function getAudioDuration(url: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const audio = document.createElement('audio')
+    audio.preload = 'metadata'
+    audio.src = url
+    audio.onloadedmetadata = () => {
+      if (!Number.isFinite(audio.duration)) {
+        resolve(null)
+        return
+      }
+      resolve(audio.duration)
+    }
+    audio.onerror = () => resolve(null)
+  })
+}
+
+function formatSeconds(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return '未检测'
+  }
+  return `${value.toFixed(2)} s`
+}
+
+function formatFilmStrength(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return '未返回'
+  }
+  return value.toFixed(2)
+}
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes)) {
+    return '0 B'
+  }
+  const units = ['B', 'KB', 'MB', 'GB']
+  let current = bytes
+  let index = 0
+  while (current >= 1024 && index < units.length - 1) {
+    current /= 1024
+    index += 1
+  }
+  return `${current.toFixed(index === 0 ? 0 : 2)} ${units[index]}`
+}
+
+function qualityLabel(level: string): string {
+  if (level === 'good') return '良好'
+  if (level === 'warn') return '一般'
+  if (level === 'bad') return '较差'
+  return '未检测'
+}
+
+function formatMimeType(mimeType: string, filename: string): string {
+  if (mimeType) {
+    return mimeType
+  }
+  const lower = filename.toLowerCase()
+  if (lower.endsWith('.wav')) return 'audio/wav'
+  if (lower.endsWith('.mp3')) return 'audio/mpeg'
+  if (lower.endsWith('.flac')) return 'audio/flac'
+  if (lower.endsWith('.m4a')) return 'audio/mp4'
+  return '未知'
 }
 
 export default App

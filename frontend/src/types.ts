@@ -1,10 +1,11 @@
 export const AppStatus = {
-  IDLE: 'IDLE',
-  UPLOADING: 'UPLOADING',
-  READY_TO_CONVERT: 'READY_TO_CONVERT',
-  CONVERTING: 'CONVERTING',
-  COMPLETED: 'COMPLETED',
-  ERROR: 'ERROR',
+  IDLE: 'idle',
+  FILE_SELECTED: 'file_selected',
+  UPLOADING: 'uploading',
+  UPLOADED: 'uploaded',
+  CONVERTING: 'converting',
+  SUCCEEDED: 'succeeded',
+  FAILED: 'failed',
 } as const
 
 export type AppStatus = (typeof AppStatus)[keyof typeof AppStatus]
@@ -13,9 +14,11 @@ export type QualityLevel = 'good' | 'warn' | 'bad'
 
 export interface AudioFile {
   file: File
-  url: string | null
+  url: string
   name: string
-  duration: number
+  size: number
+  mimeType: string
+  durationSeconds: number | null
 }
 
 export interface InputQualitySummary {
@@ -39,38 +42,152 @@ export interface AudioQualitySummary {
   possible_dropouts?: boolean | null
 }
 
+export interface UploadResponse {
+  vocals_id?: string
+  status?: string
+  is_vocal_only?: boolean
+  input_url?: string | null
+  vocals_url?: string | null
+  input_audio_path?: string | null
+  input_vocals_path?: string | null
+  input_quality_summary?: InputQualitySummary | null
+  warning?: string | null
+}
+
+export interface ConvertResponse {
+  task_id?: string
+  status?: string
+}
+
+export interface TaskError {
+  code?: string | null
+  message?: string | null
+  details?: Record<string, unknown> | null
+}
+
+export interface ResultMetadata {
+  task_id?: string | null
+  status?: string | null
+  result_url?: string | null
+  download_url?: string | null
+  input_url?: string | null
+  output_url?: string | null
+  warning?: string | null
+  condition_mode?: string | null
+  film_strength?: number | null
+  executed_internal_film?: boolean | null
+  text_style_adapter_loaded?: boolean | null
+  adapter_mode?: string | null
+  adapter_type?: string | null
+  adapter_checkpoint?: string | null
+  adapter_checkpoint_path?: string | null
+  style_prompt?: string | null
+  sample_rate?: number | null
+  duration_seconds?: number | null
+  has_nan_or_inf?: boolean | null
+  objective_metrics_summary?: Record<string, unknown> | null
+  model_preset_id?: string | null
+  requested_model_preset_id?: string | null
+  effective_model_preset_id?: string | null
+  speaker?: string | null
+  input_audio_path?: string | null
+  input_vocals_path?: string | null
+  final_output_path?: string | null
+  audio_quality_summary?: AudioQualitySummary | null
+  [key: string]: unknown
+}
+
+export interface TaskResponse {
+  task_id?: string
+  status?: string
+  progress?: number
+  stage?: string
+  message?: string
+  result_url?: string | null
+  download_url?: string | null
+  input_url?: string | null
+  output_url?: string | null
+  warning?: string | null
+  error?: TaskError | string | null
+  result_metadata?: Record<string, unknown> | null
+  engine_details?: Record<string, unknown> | null
+  [key: string]: unknown
+}
+
+export interface ProcessingResult {
+  taskId: string
+  inputAudioUrl: string | null
+  outputAudioUrl: string
+  resultUrl: string
+  downloadUrl: string
+  metadata: ResultMetadata
+}
+
+export interface ModelPresetStatus {
+  preset_id: string
+  display_name: string
+  ready: boolean
+  speaker: string
+}
+
+export interface ModelPresetCollection {
+  active_preset_id?: string
+  fallback_preset_id?: string
+  presets?: ModelPresetStatus[]
+}
+
+export interface SovitsRuntimeStatus {
+  mock?: boolean
+  condition_mode?: string | null
+  film_strength?: number | null
+  model_exists?: boolean
+  config_exists?: boolean
+}
+
+export interface TextConditioningStatus {
+  enabled?: boolean
+  film_strength?: number | null
+}
+
+export interface SystemHealthResponse {
+  ok?: boolean
+  app_status?: string
+  task_backend_mode?: string
+  mock_mode?: boolean
+  svc_model_presets?: ModelPresetCollection
+  sovits?: SovitsRuntimeStatus
+  text_conditioning?: TextConditioningStatus
+}
+
+export interface SovitsCheckResponse {
+  SOVITS_MOCK?: boolean
+  torch_cuda_available?: boolean
+  torch_device_count?: number
+  svc_model_presets?: ModelPresetCollection
+  sovits?: SovitsRuntimeStatus
+}
+
 export interface AudioStyleFeatures {
   ok: boolean
   path?: string | null
   duration_seconds?: number | null
   sample_rate?: number | null
-  frames?: number | null
-  channels?: number | null
-  rms_mean?: number | null
-  rms_std?: number | null
-  dynamic_range?: number | null
-  spectral_centroid_mean?: number | null
-  spectral_bandwidth_mean?: number | null
-  spectral_rolloff_mean?: number | null
-  zero_crossing_rate_mean?: number | null
-  f0_available?: boolean | null
-  f0_mean?: number | null
-  f0_median?: number | null
-  f0_std?: number | null
-  f0_min?: number | null
-  f0_max?: number | null
-  voiced_ratio?: number | null
-  low_energy_ratio?: number | null
-  mid_energy_ratio?: number | null
-  high_energy_ratio?: number | null
   brightness_score?: number | null
   energy_score?: number | null
   softness_score?: number | null
   thickness_score?: number | null
   pitch_height_score?: number | null
+  spectral_centroid_mean?: number | null
+  spectral_bandwidth_mean?: number | null
+  spectral_rolloff_mean?: number | null
+  zero_crossing_rate_mean?: number | null
+  f0_median?: number | null
+  voiced_ratio?: number | null
+  low_energy_ratio?: number | null
+  mid_energy_ratio?: number | null
+  high_energy_ratio?: number | null
   warnings?: string[]
-  code?: string | null
-  message?: string | null
+  [key: string]: unknown
 }
 
 export interface PromptStyleTargets {
@@ -121,297 +238,12 @@ export interface StyleEvidenceCompareResponse {
   warnings: string[]
 }
 
-export interface StyleSelection {
-  style_id?: string | null
-  style_label?: string | null
-  description?: string | null
-  model_preset_id?: string | null
-  requested_model_preset_id?: string | null
-  effective_model_preset_id?: string | null
-  preset_fallback_used?: boolean | null
-  preset_fallback_reason?: string | null
-  model_display_name?: string | null
-  model_preset_ready?: boolean | null
-  model_preset_configured?: boolean | null
-  current_style_has_dedicated_model?: boolean | null
-  model_preset_notice?: string | null
-  transpose?: number | null
-  match_score?: number | null
-  matched_keywords?: string[] | null
-  reason?: string | null
-  adapter_override_reason?: string | null
-}
-
-export interface ResultMetadata {
-  inference_mode?: string | null
-  mock_enabled?: boolean | null
-  model_path?: string | null
-  config_path?: string | null
-  model_preset_id?: string | null
-  requested_model_preset_id?: string | null
-  effective_model_preset_id?: string | null
-  preset_fallback_used?: boolean | null
-  preset_fallback_reason?: string | null
-  model_display_name?: string | null
-  source_repo?: string | null
-  source_url?: string | null
-  license?: string | null
-  install_report_path?: string | null
-  notes?: string | null
-  model_path_basename?: string | null
-  config_path_basename?: string | null
-  model_preset_ready?: boolean | null
-  model_preset_configured?: boolean | null
-  is_demo_quality?: boolean | null
-  smoke_test_passed?: boolean | null
-  is_technical_validation_only?: boolean | null
-  speaker?: string | null
-  device?: string | null
-  selected_output?: string | null
-  final_output_path?: string | null
-  return_code?: number | null
-  elapsed_seconds?: number | null
-  sovits_command_debug_path?: string | null
-  gpu_telemetry_debug_path?: string | null
-  task_backend_mode?: string | null
-  encoder_model_name?: string | null
-  encoder_type?: string | null
-  embedding_dim?: number | null
-  embedding_norm?: number | null
-  top_keywords?: string[] | null
-  text_encoding_status?: string | null
-  text_encoding_enabled?: boolean | null
-  condition_mode?: string | null
-  style_prompt?: string | null
-  style_emb_path?: string | null
-  style_emb_format?: string | null
-  film_strength?: number | null
-  film_target?: string | null
-  executed_internal_film?: boolean | null
-  called_conditioned_inference?: boolean | null
-  conditioning_report_path?: string | null
-  adapter_enabled?: boolean | null
-  adapter_mode?: string | null
-  adapter_version?: string | null
-  adapter_type?: string | null
-  adapter_checkpoint_path?: string | null
-  control_params_summary?: Record<string, unknown> | null
-  adapter_override_reason?: string | null
-  adapter_fallback_reason?: string | null
-  audio_quality_summary?: AudioQualitySummary | null
-  audio_quality_report_path?: string | null
-  input_audio_path?: string | null
-  input_vocals_path?: string | null
-  text_style_adapter_notice?: string | null
-  called_inference_main?: boolean | null
-  input_quality_summary?: InputQualitySummary | null
-  input_quality_report_path?: string | null
-  effective_style_strength?: number | null
-  f0_method?: string | null
-  f0_fallback_reason?: string | null
-  auto_predict_f0?: boolean | null
-  slice_db?: number | null
-  clip_seconds?: number | null
-  pad_seconds?: number | null
-  conversion_params_path?: string | null
-  conversion_params_summary?: Record<string, unknown> | null
-}
-
-export interface ProcessingResult {
-  originalUrl: string
-  convertedUrl: string
-  metadata?: ResultMetadata
-}
-
-export interface TaskResponse {
-  task_id?: string
-  engine?: string
-  status?: string
-  progress?: number
-  stage?: string
-  message?: string
-  selected_style?: StyleSelection | null
-  result_url?: string | null
-  error?: unknown
-  inference_mode?: string | null
-  engine_details?: Record<string, unknown> | null
-  result_metadata?: Record<string, unknown> | null
-  task_backend_mode?: string | null
-  text_encoding?: Record<string, unknown> | null
-  adapter_result?: Record<string, unknown> | null
-  audio_quality?: Record<string, unknown> | null
-  mock_enabled?: boolean | null
-  model_path?: string | null
-  config_path?: string | null
-  speaker?: string | null
-  device?: string | null
-  selected_output?: string | null
-  final_output_path?: string | null
-  return_code?: number | null
-  elapsed_seconds?: number | null
-  sovits_command_debug_path?: string | null
-  gpu_telemetry_debug_path?: string | null
-  encoder_model_name?: string | null
-  encoder_type?: string | null
-  embedding_dim?: number | null
-  embedding_norm?: number | null
-  top_keywords?: string[] | null
-  text_encoding_status?: string | null
-  text_encoding_enabled?: boolean | null
-  condition_mode?: string | null
-  style_prompt?: string | null
-  style_emb_path?: string | null
-  style_emb_format?: string | null
-  film_strength?: number | null
-  film_target?: string | null
-  executed_internal_film?: boolean | null
-  called_conditioned_inference?: boolean | null
-  conditioning_report_path?: string | null
-  adapter_enabled?: boolean | null
-  adapter_mode?: string | null
-  adapter_version?: string | null
-  adapter_type?: string | null
-  adapter_checkpoint_path?: string | null
-  control_params_summary?: Record<string, unknown> | null
-  adapter_override_reason?: string | null
-  adapter_fallback_reason?: string | null
-  audio_quality_summary?: AudioQualitySummary | null
-  audio_quality_report_path?: string | null
-  input_audio_path?: string | null
-  input_vocals_path?: string | null
-  text_style_adapter_notice?: string | null
-  model_preset_id?: string | null
-  requested_model_preset_id?: string | null
-  effective_model_preset_id?: string | null
-  preset_fallback_used?: boolean | null
-  preset_fallback_reason?: string | null
-  model_display_name?: string | null
-  source_repo?: string | null
-  source_url?: string | null
-  license?: string | null
-  install_report_path?: string | null
-  notes?: string | null
-  model_path_basename?: string | null
-  config_path_basename?: string | null
-  model_preset_ready?: boolean | null
-  model_preset_configured?: boolean | null
-  is_demo_quality?: boolean | null
-  smoke_test_passed?: boolean | null
-  is_technical_validation_only?: boolean | null
-  input_quality_summary?: InputQualitySummary | null
-  input_quality_report_path?: string | null
-  f0_method?: string | null
-  f0_fallback_reason?: string | null
-  auto_predict_f0?: boolean | null
-  slice_db?: number | null
-  clip_seconds?: number | null
-  pad_seconds?: number | null
-  conversion_params_path?: string | null
-  conversion_params_summary?: Record<string, unknown> | null
-}
-
-export interface UploadResponse {
-  vocals_id?: string
-  status?: string
-  is_vocal_only?: boolean
-  input_quality_summary?: InputQualitySummary | null
-}
-
-export interface ModelPresetStatus {
-  preset_id: string
-  display_name: string
-  ready: boolean
-  speaker: string
-  style_tags?: string[]
-  source_repo?: string
-  source_url?: string
-  license?: string
-  install_report_path?: string
-  notes?: string
-  is_configured?: boolean
-  is_demo_quality?: boolean
-  smoke_test_passed?: boolean
-  is_technical_validation_only?: boolean
-  model_exists?: boolean
-  config_exists?: boolean
-}
-
-export interface ModelPresetCollection {
-  active_preset_id?: string
-  fallback_preset_id?: string
-  active_preset_ready?: boolean
-  presets?: ModelPresetStatus[]
-}
-
-export interface SovitsRuntimeStatus {
-  mock?: boolean
-  preset?: string | null
-  model_exists?: boolean
-  config_exists?: boolean
-  model_basename?: string | null
-  config_basename?: string | null
-  speaker?: string | null
-  device?: string | null
-  condition_mode?: string | null
-  conditioned_infer_exists?: boolean
-  called_conditioned_inference?: boolean
-  style_dim?: number | null
-  film_strength?: number | null
-  film_target?: string | null
-  style_emb_format?: string | null
-  speech_encoder?: string | null
-  f0_predictor?: string | null
-}
-
-export interface TextConditioningStatus {
-  enabled?: boolean
-  style_dim?: number | null
-  film_strength?: number | null
-  film_target?: string | null
-  style_emb_format?: string | null
-  encoder_status?: string | null
-  encoder_type?: string | null
-}
-
-export interface SystemHealthResponse {
-  ok?: boolean
-  app_status?: string
-  mock_mode?: boolean
-  task_backend_mode?: string
-  svc_model_presets?: ModelPresetCollection
-  sovits?: SovitsRuntimeStatus
-  text_conditioning?: TextConditioningStatus
-  timestamp?: string
-}
-
-export interface SovitsCheckResponse {
-  SOVITS_MOCK?: boolean
-  SOVITS_DEVICE?: string
-  torch_cuda_available?: boolean
-  torch_device_count?: number
-  f0_method?: string | null
-  f0_fallback_reason?: string | null
-  auto_predict_f0?: boolean | null
-  slice_db?: number | null
-  clip_seconds?: number | null
-  pad_seconds?: number | null
-  model_preset_id?: string
-  model_display_name?: string
-  svc_model_presets?: ModelPresetCollection
-  checks?: Array<Record<string, unknown>>
-  sovits?: SovitsRuntimeStatus
-  text_conditioning?: TextConditioningStatus
-}
-
-export const STYLE_PRESETS = [
-  '流行',
-  '温柔',
-  '气声',
-  '清亮',
-  '摇滚',
-  '厚重',
-  '少年感',
-  '治愈',
-  '女声',
-  '男声',
+export const STYLE_PROMPT_CHIPS = [
+  '温柔明亮流行女声',
+  '清亮少年感流行男声',
+  '低沉磁性叙事感',
+  '激昂有力量摇滚感',
+  '甜美轻柔治愈感',
 ]
+
+export const STYLE_PRESETS = STYLE_PROMPT_CHIPS

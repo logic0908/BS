@@ -15,8 +15,8 @@ interface AudioComparePanelProps {
 const AudioComparePanel: React.FC<AudioComparePanelProps> = ({
   originalUrl,
   convertedUrl,
-  originalLabel = '原始音频',
-  convertedLabel = '转换音频',
+  originalLabel = '输入音频',
+  convertedLabel = '输出音频',
   downloadUrl,
   downloadFilename = 'converted.wav',
 }) => {
@@ -30,12 +30,12 @@ const AudioComparePanel: React.FC<AudioComparePanelProps> = ({
 
   const activeSummary = useMemo(() => {
     if (activeSide === 'converted' && convertedUrl) {
-      return '当前聚焦：转换音频'
+      return '当前聚焦：输出音频'
     }
     if (originalUrl) {
-      return '当前聚焦：原始音频'
+      return '当前聚焦：输入音频'
     }
-    return '请先上传音频'
+    return '输入音频不可预览'
   }, [activeSide, convertedUrl, originalUrl])
 
   const stopAll = () => {
@@ -73,15 +73,15 @@ const AudioComparePanel: React.FC<AudioComparePanelProps> = ({
   }
 
   return (
-    <div className="compare-panel">
+    <section className="compare-panel" aria-label="输入输出音频对比">
       <div className="compare-actions">
         <button type="button" className="secondary-button" onClick={playOriginal} disabled={!canPlayOriginal}>
           <PlayCircle className="button-icon" />
-          播放原始
+          播放输入
         </button>
         <button type="button" className="secondary-button" onClick={playConverted} disabled={!canPlayConverted}>
           <PlayCircle className="button-icon" />
-          播放转换
+          播放输出
         </button>
         <button type="button" className="secondary-button" onClick={toggleAB} disabled={!canToggle}>
           <Repeat2 className="button-icon" />
@@ -94,34 +94,26 @@ const AudioComparePanel: React.FC<AudioComparePanelProps> = ({
         {downloadUrl ? (
           <a href={downloadUrl} download={downloadFilename} className="download-button">
             <Download className="button-icon" />
-            下载转换结果
+            下载输出音频
           </a>
         ) : null}
       </div>
 
-      <div className="compare-summary">{activeSummary}</div>
+      <div className="compare-summary" aria-live="polite">
+        {activeSummary}
+      </div>
 
       <div className="compare-grid">
         <div className={`compare-card ${activeSide === 'original' ? 'is-active' : ''}`}>
-          <WaveformPlayer
-            ref={originalRef}
-            audioUrl={originalUrl}
-            label={originalLabel}
-            waveColor="#2563eb"
-            progressColor="#0f172a"
-          />
+          <h4 className="audio-card-title">{originalLabel}</h4>
+          {originalUrl ? <WaveformPlayer ref={originalRef} audioUrl={originalUrl} label={originalLabel} /> : <div className="waveform-placeholder">输入音频不可预览</div>}
         </div>
         <div className={`compare-card ${activeSide === 'converted' ? 'is-active' : ''}`}>
-          <WaveformPlayer
-            ref={convertedRef}
-            audioUrl={convertedUrl}
-            label={convertedLabel}
-            waveColor="#d97706"
-            progressColor="#7c2d12"
-          />
+          <h4 className="audio-card-title">{convertedLabel}</h4>
+          <WaveformPlayer ref={convertedRef} audioUrl={convertedUrl} label={convertedLabel} waveColor="#d97706" progressColor="#7c2d12" />
         </div>
       </div>
-    </div>
+    </section>
   )
 }
 
