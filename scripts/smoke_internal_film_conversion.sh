@@ -61,6 +61,7 @@ export SOVITS_STYLE_DIM="${SOVITS_STYLE_DIM:-256}"
 export SOVITS_FILM_STRENGTH="${SOVITS_FILM_STRENGTH:-0.10}"
 export SOVITS_FILM_TARGET="${SOVITS_FILM_TARGET:-pre_decoder}"
 export SOVITS_STYLE_EMB_FORMAT="${SOVITS_STYLE_EMB_FORMAT:-pt}"
+export STYLE_ADAPTER_CHECKPOINT_PATH="${STYLE_ADAPTER_CHECKPOINT_PATH:-$PROJECT_ROOT/runtime/style_adapter/text_style_adapter_1000.pt}"
 
 python "$PROJECT_ROOT/scripts/check_models_ready.py" --preset "$PRESET_ID"
 
@@ -142,6 +143,8 @@ summary = {
     "executed_internal_film": bool(conditioning_report.get("executed_internal_film")),
     "condition_mode": metadata.get("condition_mode"),
     "film_strength": metadata.get("film_strength"),
+    "text_style_adapter_loaded": str(metadata.get("adapter_mode") or "") == "trained",
+    "adapter_checkpoint": str(metadata.get("adapter_checkpoint_path") or ""),
     "style_prompt": metadata.get("style_prompt") or style_prompt,
     "conditioning_report_summary": {
         "executed_internal_film": conditioning_report.get("executed_internal_film"),
@@ -149,6 +152,10 @@ summary = {
         "style_emb_format": conditioning_report.get("style_emb_format"),
     },
 }
+
+project_root_runtime = str(project_root / "runtime" / "style_adapter" / "text_style_adapter_1000.pt")
+if summary["adapter_checkpoint"] == project_root_runtime:
+    summary["adapter_checkpoint"] = "runtime/style_adapter/text_style_adapter_1000.pt"
 summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 errors: list[str] = []
@@ -158,6 +165,10 @@ if not style_embedding_path.exists():
     errors.append("style_embedding.pt missing")
 if not summary["executed_internal_film"]:
     errors.append("conditioning_report.json does not contain executed_internal_film=true")
+if not summary["text_style_adapter_loaded"]:
+    errors.append("text_style_adapter_loaded is not true in task metadata")
+if summary["adapter_checkpoint"] != "runtime/style_adapter/text_style_adapter_1000.pt":
+    errors.append("adapter_checkpoint is not runtime/style_adapter/text_style_adapter_1000.pt")
 if not finite:
     errors.append("output audio contains NaN/Inf")
 if duration_seconds <= 0:

@@ -21,7 +21,7 @@ if str(BACKEND_DIR) not in sys.path:
 from app.services.svc_task_service import svc_task_service  # noqa: E402
 
 
-DEFAULT_OUTPUT = PROJECT_ROOT / "runtime" / "eval_reports" / "film_strength_ablation.json"
+DEFAULT_OUTPUT = PROJECT_ROOT / "runtime" / "eval_reports" / "film_strength_ablation_1000.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,10 +63,12 @@ def main() -> int:
         output_path = output_dir / "converted.wav"
 
         if args.skip_existing and output_path.exists() and not args.dry_run:
+            requested_adapter_mode = "no_adapter" if condition_mode == "none" else "trained_adapter"
             record = {
                 "label": label,
                 "condition_mode": condition_mode,
                 "film_strength": strength,
+                "requested_adapter_mode": requested_adapter_mode,
                 "output_path": str(output_path),
                 "skipped_existing": True,
             }
@@ -74,14 +76,21 @@ def main() -> int:
             continue
 
         if args.dry_run or not Path(args.input).exists():
+            requested_adapter_mode = "no_adapter" if condition_mode == "none" else "trained_adapter"
             payload["results"].append(
                 {
                     "label": label,
                     "condition_mode": condition_mode,
                     "film_strength": strength,
+                    "requested_adapter_mode": requested_adapter_mode,
                     "output_path": str(output_path),
                     "conditioning_report_path": str(output_dir / "conditioning_report.json"),
                     "executed_internal_film": None if strength == 0 else "dry_run",
+                    "text_style_adapter_loaded": False,
+                    "adapter_checkpoint": "runtime/style_adapter/text_style_adapter_1000.pt",
+                    "adapter_mode": requested_adapter_mode,
+                    "adapter_type": "dry_run",
+                    "style_adapter_output_path": str(output_dir / "style_adapter_output.json"),
                     "sample_rate": input_probe.get("sample_rate"),
                     "duration_seconds": input_probe.get("duration_seconds"),
                     "has_nan_or_inf": input_probe.get("has_nan_or_inf"),
@@ -101,6 +110,7 @@ def main() -> int:
             preset=args.preset,
             condition_mode=condition_mode,
             film_strength=strength,
+            requested_adapter_mode="no_adapter" if condition_mode == "none" else "trained_adapter",
             output_path=output_path,
         )
         payload["status"] = "completed"
@@ -118,6 +128,7 @@ def run_single_case(
     preset: str,
     condition_mode: str,
     film_strength: float,
+    requested_adapter_mode: str,
     output_path: Path,
 ) -> dict[str, Any]:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -129,6 +140,7 @@ def run_single_case(
             "SOVITS_MOCK": "false",
             "SOVITS_CONDITION_MODE": condition_mode,
             "SOVITS_FILM_STRENGTH": f"{film_strength:.2f}",
+            "STYLE_ADAPTER_CHECKPOINT_PATH": str(PROJECT_ROOT / "runtime" / "style_adapter" / "text_style_adapter_1000.pt"),
         }
     ):
         svc_task_service.process_task(
@@ -139,24 +151,46 @@ def run_single_case(
             model_preset_id=preset,
             allow_preset_fallback=False,
             output_path=str(output_path),
-            requested_adapter_mode="no_adapter",
+            requested_adapter_mode=requested_adapter_mode,
         )
     task = svc_task_service.get_task(task_id)
     debug_dir = PROJECT_ROOT / "runtime" / "debug" / task_id
     conditioning_report_path = debug_dir / "conditioning_report.json"
     conditioning_report = read_json(conditioning_report_path)
+    style_adapter_output_path = debug_dir / "style_adapter_output.json"
+    style_adapter_output = read_json(style_adapter_output_path)
     sovits_debug = read_json(debug_dir / "sovits_debug.json")
     runtime_config = dict(sovits_debug.get("runtime_config") or {})
     probe = probe_audio(str(output_path))
     engine_details = dict((task.engine_details or {})) if task else {}
+    adapter_mode = str(engine_details.get("adapter_mode") or style_adapter_output.get("adapter_mode") or "")
+    adapter_type = str(engine_details.get("adapter_type") or style_adapter_output.get("adapter_type") or "")
+    adapter_checkpoint = str(engine_details.get("adapter_checkpoint_path") or "")
+    if not adapter_checkpoint:
+        adapter_checkpoint = str(style_adapter_output.get("adapter_checkpoint_path") or "")
+    canonical_checkpoint = str(PROJECT_ROOT / "runtime" / "style_adapter" / "text_style_adapter_1000.pt")
+    if adapter_checkpoint == canonical_checkpoint:
+        adapter_checkpoint = "runtime/style_adapter/text_style_adapter_1000.pt"
+    text_style_adapter_loaded = bool(style_adapter_output.get("adapter_enabled")) and adapter_mode == "trained"
+    if condition_mode == "internal_film" and not text_style_adapter_loaded:
+        raise RuntimeError(
+            "internal_film case did not load trained adapter; "
+            f"adapter_mode={adapter_mode}, adapter_type={adapter_type}, style_adapter_output={style_adapter_output_path}"
+        )
     return {
         "task_id": task_id,
         "label": "none" if condition_mode == "none" else f"internal_film_{film_strength:.2f}",
         "condition_mode": condition_mode,
         "film_strength": film_strength,
+        "requested_adapter_mode": requested_adapter_mode,
         "output_path": str(output_path),
         "conditioning_report_path": str(conditioning_report_path),
         "executed_internal_film": conditioning_report.get("executed_internal_film", runtime_config.get("called_conditioned_inference")),
+        "text_style_adapter_loaded": text_style_adapter_loaded,
+        "adapter_checkpoint": adapter_checkpoint,
+        "adapter_mode": adapter_mode,
+        "adapter_type": adapter_type,
+        "style_adapter_output_path": str(style_adapter_output_path),
         "sample_rate": probe.get("sample_rate"),
         "duration_seconds": probe.get("duration_seconds"),
         "has_nan_or_inf": probe.get("has_nan_or_inf"),
@@ -167,6 +201,8 @@ def run_single_case(
             "command_or_debug_dir": str(debug_dir / "sovits_command.txt"),
             "mock_enabled": runtime_config.get("mock_enabled"),
             "called_conditioned_inference": runtime_config.get("called_conditioned_inference"),
+            "adapter_mode": engine_details.get("adapter_mode"),
+            "adapter_checkpoint_path": adapter_checkpoint,
         },
         "dry_run": False,
     }
@@ -218,21 +254,25 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- preset: `{payload.get('preset', '')}`",
         f"- prompt: {payload.get('prompt', '')}",
         "",
-        "| label | condition_mode | film_strength | output_path | executed_internal_film | sample_rate | duration_seconds | has_nan_or_inf | requested_preset | effective_preset | preset_fallback_used |",
-        "| --- | --- | ---: | --- | --- | ---: | ---: | --- | --- | --- | --- |",
+        "| label | condition_mode | film_strength | requested_adapter_mode | executed_internal_film | text_style_adapter_loaded | adapter_mode | adapter_type | adapter_checkpoint | output_path | sample_rate | duration_seconds | requested_preset | effective_preset | preset_fallback_used |",
+        "| --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- | ---: | ---: | --- | --- | --- |",
     ]
     for row in payload.get("results") or []:
         meta = row.get("task_metadata") or {}
         lines.append(
-            "| `{label}` | `{condition_mode}` | `{film_strength}` | `{output_path}` | `{executed_internal_film}` | `{sample_rate}` | `{duration_seconds}` | `{has_nan_or_inf}` | `{requested}` | `{effective}` | `{fallback}` |".format(
+            "| `{label}` | `{condition_mode}` | `{film_strength}` | `{requested_adapter_mode}` | `{executed_internal_film}` | `{adapter_loaded}` | `{adapter_mode}` | `{adapter_type}` | `{adapter_checkpoint}` | `{output_path}` | `{sample_rate}` | `{duration_seconds}` | `{requested}` | `{effective}` | `{fallback}` |".format(
                 label=row.get("label", ""),
                 condition_mode=row.get("condition_mode", ""),
                 film_strength=row.get("film_strength", ""),
+                requested_adapter_mode=row.get("requested_adapter_mode", ""),
                 output_path=row.get("output_path", ""),
                 executed_internal_film=row.get("executed_internal_film", ""),
+                adapter_loaded=row.get("text_style_adapter_loaded", ""),
+                adapter_mode=row.get("adapter_mode", ""),
+                adapter_type=row.get("adapter_type", ""),
+                adapter_checkpoint=row.get("adapter_checkpoint", ""),
                 sample_rate=row.get("sample_rate", ""),
                 duration_seconds=row.get("duration_seconds", ""),
-                has_nan_or_inf=row.get("has_nan_or_inf", ""),
                 requested=meta.get("requested_model_preset_id", ""),
                 effective=meta.get("effective_model_preset_id", ""),
                 fallback=meta.get("preset_fallback_used", ""),

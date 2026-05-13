@@ -5,6 +5,7 @@ import argparse
 import json
 import math
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -61,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8, help="Mini-batch size")
     parser.add_argument("--style-dim", type=int, default=256, help="Prompt embedding dimension")
     parser.add_argument("--device", default="cpu", help="Training device, e.g. cpu or cuda")
+    parser.add_argument("--max-items", type=int, default=0, help="Cap usable rows for small-run smoke/sanity training. <=0 means no cap.")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed used for temporary split assignment when val/test are missing.")
     parser.add_argument("--dry-run", action="store_true", help="Validate data loading, embedding, output path, and logs without training")
     parser.add_argument(
         "--report-output",
@@ -79,6 +82,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    max_items = int(getattr(args, "max_items", 0) or 0)
+    seed = int(getattr(args, "seed", 42) or 42)
     rows = load_metadata_rows(args.metadata)
     encoder = TextStyleEncoder(style_dim=args.style_dim)
     normalized_rows, warnings = normalize_rows(rows)
@@ -124,6 +129,12 @@ def main() -> int:
 
     if skipped_missing_prompt:
         warnings.append(f"skipped_missing_prompt:{skipped_missing_prompt}")
+    if max_items > 0 and len(prepared_rows) > max_items:
+        prepared_rows = prepared_rows[:max_items]
+        embeddings = embeddings[:max_items]
+        warnings.append(f"max_items_applied:{max_items}")
+
+    split_fallback_applied = ensure_split_assignments(prepared_rows, seed=seed, warnings=warnings)
 
     can_train = (
         not args.dry_run
@@ -140,6 +151,7 @@ def main() -> int:
         warnings=warnings,
         encoder_types=encoder_types,
         can_train=can_train,
+        split_fallback_applied=split_fallback_applied,
     )
 
     if args.dry_run:
@@ -171,6 +183,7 @@ def main() -> int:
         epochs=max(args.epochs, 1),
         batch_size=max(args.batch_size, 1),
         device=args.device,
+        seed=seed,
     )
     report["status"] = "trained"
     report["training"] = checkpoint_summary
@@ -285,6 +298,7 @@ def build_report(
     warnings: list[str],
     encoder_types: Counter[str],
     can_train: bool,
+    split_fallback_applied: bool,
 ) -> dict[str, Any]:
     split_counter = Counter(row.get("split", "unspecified") for row in prepared_rows)
     speaker_counter = Counter(first_non_empty(row.get("singer"), row.get("speaker"), "unknown") for row in prepared_rows)
@@ -312,10 +326,13 @@ def build_report(
         "style_dim": int(args.style_dim),
         "epochs": int(args.epochs),
         "batch_size": int(args.batch_size),
+        "max_items": int(getattr(args, "max_items", 0) or 0),
         "device": args.device,
+        "seed": int(getattr(args, "seed", 42) or 42),
         "minimum_train_samples": int(args.minimum_train_samples),
         "can_train": can_train,
         "torch_available": torch is not None,
+        "split_fallback_applied": split_fallback_applied,
         "encoder_types": dict(encoder_types),
         "splits": dict(split_counter),
         "speakers": dict(speaker_counter),
@@ -337,23 +354,37 @@ def train_adapter(
     epochs: int,
     batch_size: int,
     device: str,
+    seed: int,
 ) -> dict[str, Any]:
-    x = torch.tensor(embeddings, dtype=torch.float32)
-    y = torch.tensor(
-        [numeric_target_vector(row["control_params"]) for row in prepared_rows],
-        dtype=torch.float32,
-    )
-    dataset = TensorDataset(x, y)
-    loader = DataLoader(dataset, batch_size=min(batch_size, len(dataset)), shuffle=True)
+    torch.manual_seed(seed)
+    np.random.seed(seed)
 
-    if device.startswith("cuda") and not torch.cuda.is_available():
-        device = "cpu"
-    target_device = torch.device(device)
+    x = torch.tensor(embeddings, dtype=torch.float32)
+    y = torch.tensor([numeric_target_vector(row["control_params"]) for row in prepared_rows], dtype=torch.float32)
+
+    train_indices = [idx for idx, row in enumerate(prepared_rows) if str(row.get("split") or "").strip().lower() == "train"]
+    val_indices = [idx for idx, row in enumerate(prepared_rows) if str(row.get("split") or "").strip().lower() == "val"]
+    test_indices = [idx for idx, row in enumerate(prepared_rows) if str(row.get("split") or "").strip().lower() == "test"]
+    if not train_indices:
+        # Last-resort safety: keep training possible even if split labels were malformed.
+        train_indices = list(range(len(prepared_rows)))
+    train_x, train_y = x[train_indices], y[train_indices]
+    val_x, val_y = (x[val_indices], y[val_indices]) if val_indices else (None, None)
+    test_x, test_y = (x[test_indices], y[test_indices]) if test_indices else (None, None)
+
+    train_dataset = TensorDataset(train_x, train_y)
+    loader = DataLoader(train_dataset, batch_size=min(batch_size, len(train_dataset)), shuffle=True)
+
+    requested_device = str(device).strip() or "cpu"
+    effective_device, gpu_name, device_fallback_reason = resolve_device(requested_device)
+    target_device = torch.device(effective_device)
     model = AdapterMLP(input_dim=x.shape[1], output_dim=y.shape[1], hidden_dims=[128, 64]).to(target_device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     loss_fn = nn.MSELoss()
 
-    history: list[float] = []
+    train_history: list[float] = []
+    val_history: list[float | None] = []
+    started = time.perf_counter()
     model.train()
     for _ in range(epochs):
         epoch_losses: list[float] = []
@@ -366,35 +397,143 @@ def train_adapter(
             loss.backward()
             optimizer.step()
             epoch_losses.append(float(loss.detach().cpu().item()))
-        history.append(round(sum(epoch_losses) / max(len(epoch_losses), 1), 8))
+        train_epoch_loss = round(sum(epoch_losses) / max(len(epoch_losses), 1), 8)
+        train_history.append(train_epoch_loss)
+        if val_x is not None and val_y is not None and val_x.shape[0] > 0:
+            model.eval()
+            with torch.no_grad():
+                prediction = model(val_x.to(target_device))
+                val_loss = float(loss_fn(prediction, val_y.to(target_device)).detach().cpu().item())
+            val_history.append(round(val_loss, 8))
+            model.train()
+        else:
+            val_history.append(None)
+
+    best_epoch = 1
+    best_val_loss: float | None = None
+    if any(loss is not None for loss in val_history):
+        best_epoch = min(
+            ((idx + 1, loss) for idx, loss in enumerate(val_history) if loss is not None),
+            key=lambda item: item[1],
+        )[0]
+        best_val_loss = val_history[best_epoch - 1]
+    elif train_history:
+        best_epoch = min(range(len(train_history)), key=lambda idx: train_history[idx]) + 1
+        best_val_loss = None
+
+    test_loss = None
+    if test_x is not None and test_y is not None and test_x.shape[0] > 0:
+        model.eval()
+        with torch.no_grad():
+            prediction = model(test_x.to(target_device))
+            test_loss = float(loss_fn(prediction, test_y.to(target_device)).detach().cpu().item())
+        model.train()
+    total_seconds = round(time.perf_counter() - started, 6)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    sample_records = [
+        {
+            "id": row.get("id"),
+            "model_preset_id": row.get("model_preset_id", "final_primary"),
+            "gender_hint": str((row.get("control_params") or {}).get("gender_hint") or "neutral"),
+            "style_label": row.get("style_label", ""),
+            "style_prompt": row.get("style_prompt", ""),
+            "split": row.get("split", "unspecified"),
+        }
+        for row in prepared_rows
+    ]
     checkpoint_payload = {
         "adapter_version": "text_style_adapter_v1_lightweight_entrypoint",
         "adapter_type": "trained_mlp",
+        "checkpoint_format_version": 2,
         "input_dim": int(x.shape[1]),
         "output_dim": int(y.shape[1]),
         "hidden_dims": [128, 64],
         "target_keys": list(TRAINED_TARGET_KEYS),
         "records": len(prepared_rows),
+        "train_size": len(train_indices),
+        "val_size": len(val_indices),
+        "test_size": len(test_indices),
         "epochs": epochs,
         "batch_size": batch_size,
         "learning_rate": 1e-3,
-        "final_loss": history[-1] if history else math.nan,
+        "final_loss": train_history[-1] if train_history else math.nan,
+        "train_loss_per_epoch": train_history,
+        "val_loss_per_epoch": val_history,
+        "best_epoch": best_epoch,
+        "best_val_loss": best_val_loss,
+        "final_train_loss": train_history[-1] if train_history else None,
+        "test_loss": round(test_loss, 8) if test_loss is not None else None,
+        "device": effective_device,
+        "gpu_name": gpu_name,
+        "device_fallback_reason": device_fallback_reason,
+        "total_seconds": total_seconds,
         "model_state_dict": model.cpu().state_dict(),
-        "sample_records": prepared_rows[:16],
+        "sample_embeddings": embeddings.astype(np.float32).tolist(),
+        "sample_records": sample_records,
     }
     torch.save(checkpoint_payload, output_path)
     return {
         "checkpoint_path": str(output_path),
         "records": len(prepared_rows),
+        "train_size": len(train_indices),
+        "val_size": len(val_indices),
+        "test_size": len(test_indices),
         "epochs": epochs,
         "batch_size": batch_size,
         "input_dim": int(x.shape[1]),
         "output_dim": int(y.shape[1]),
-        "final_loss": history[-1] if history else None,
-        "loss_curve": history,
+        "train_loss_per_epoch": train_history,
+        "val_loss_per_epoch": val_history,
+        "best_epoch": best_epoch,
+        "best_val_loss": best_val_loss,
+        "final_train_loss": train_history[-1] if train_history else None,
+        "final_loss": train_history[-1] if train_history else None,
+        "test_loss": round(test_loss, 8) if test_loss is not None else None,
+        "total_seconds": total_seconds,
+        "device": effective_device,
+        "gpu_name": gpu_name,
+        "device_fallback_reason": device_fallback_reason,
     }
+
+
+def ensure_split_assignments(rows: list[dict[str, Any]], seed: int, warnings: list[str]) -> bool:
+    if not rows:
+        return False
+    normalized_splits = [str(row.get("split") or "").strip().lower() for row in rows]
+    has_val_or_test = any(split in {"val", "test"} for split in normalized_splits)
+    if has_val_or_test:
+        return False
+    indices = list(range(len(rows)))
+    rng = np.random.default_rng(seed)
+    rng.shuffle(indices)
+    for rank, idx in enumerate(indices):
+        frac = rank / max(len(indices), 1)
+        if frac < 0.8:
+            rows[idx]["split"] = "train"
+        elif frac < 0.9:
+            rows[idx]["split"] = "val"
+        else:
+            rows[idx]["split"] = "test"
+    warnings.append("temporary_split_assignment:8_1_1")
+    return True
+
+
+def resolve_device(requested_device: str) -> tuple[str, str | None, str | None]:
+    device_token = requested_device.lower()
+    fallback_reason = None
+    gpu_name = None
+    if device_token.startswith("cuda"):
+        if torch.cuda.is_available():
+            effective = requested_device
+            try:
+                gpu_name = torch.cuda.get_device_name(torch.device(effective))
+            except Exception:
+                gpu_name = torch.cuda.get_device_name(0)
+            return effective, gpu_name, fallback_reason
+        fallback_reason = "cuda_requested_but_not_available"
+        return "cpu", gpu_name, fallback_reason
+    return requested_device, gpu_name, fallback_reason
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:

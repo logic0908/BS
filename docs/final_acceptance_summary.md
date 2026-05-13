@@ -16,17 +16,24 @@
 - text style adapter dry-run：已生成 `runtime/eval_reports/text_style_adapter_dry_run.json`
 - 主观听评汇总：已生成空状态 `runtime/eval_reports/subjective_eval_summary.json`
 - prompt matrix：已生成 `runtime/eval_reports/eval_prompt_matrix.json`
-- 客观指标：已生成 `runtime/eval_reports/objective_metrics.json`
-- condition-mode ablation：已生成真实单样例报告
-- film-strength ablation：已生成真实单样例报告
+- 客观指标（1000 对齐版）：已刷新 `runtime/eval_reports/objective_metrics_1000.{json,csv,md}`
+- condition-mode ablation（1000）：已通过最终断言核验
+- film-strength ablation（1000）：已通过最终断言核验
+- 1000 条训练：已生成 `runtime/eval_reports/text_style_adapter_1000_train_report.json`
+- 1000 adapter checkpoint：`runtime/style_adapter/text_style_adapter_1000.pt`
+- 1000 曲线图：`runtime/figures/training_loss_curve_1000.png`
 
 ## 已确认的工程事实
 
 - `style_prompt -> style_emb -> So-VITS-SVC internal_film` 已实现
 - 真实 smoke 已生成有效音频，并记录 `executed_internal_film=true`
+- 真实 smoke 已记录 `text_style_adapter_loaded=true` 与 `adapter_checkpoint=runtime/style_adapter/text_style_adapter_1000.pt`
+- `film_strength` 的 `internal_film_0.05/0.10/0.15` 全部满足：`executed_internal_film=true`、`text_style_adapter_loaded=true`、`adapter_mode=trained`、`adapter_type=trained_mlp`
+- `condition_mode` 的 `internal_film` 组满足：`executed_internal_film=true`、`text_style_adapter_loaded=true`、`adapter_mode=trained`、`adapter_type=trained_mlp`
 - `TextStyleEncoder` 可生成 `style_embedding.pt`
 - `StyleFiLMAdapter` 可执行调制
 - 前端能够展示 `condition_mode / film_strength / executed_internal_film`
+- `TextStyleAdapter` 训练型 checkpoint 已可被类加载（`adapter_mode=trained`，无 fallback）
 
 ## 本轮补充的材料方向
 

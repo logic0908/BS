@@ -1,0 +1,38 @@
+{
+  "style_label_to_prompt_fragments": {
+    "breathy": ["气声感", "轻柔", "温柔"],
+    "powerful": ["有力量", "激昂", "穿透力强"],
+    "bright": ["明亮", "清亮", "流行感"],
+    "soft": ["温柔", "轻柔", "治愈"],
+    "folk": ["自然", "温暖", "民谣感"],
+    "rock": ["激昂", "有力量", "摇滚感"],
+    "glissando": ["滑音", "连贯流动", "歌唱性"],
+    "vibrato": ["颤音", "歌唱性更强", "情绪更饱满"],
+    "pharyngeal": ["共鸣靠前", "穿透力", "力度感"],
+    "mixed_voice": ["混声", "平衡共鸣", "稳定高音"],
+    "falsetto": ["假声", "轻盈", "高音更通透"],
+    "mixed_voice_and_falsetto": ["混声", "假声过渡", "高音稳定"],
+    "control": ["自然", "中性", "稳定演唱"],
+    "unknown": ["自然", "稳定", "歌唱性"]
+  },
+  "emotion_to_prompt_fragments": {
+    "happy": ["情绪积极", "明快"],
+    "sad": ["情绪内敛", "细腻"],
+    "hapsadpy": ["情绪内敛", "细腻"]
+  },
+  "pace_to_prompt_fragments": {
+    "slow": ["节奏舒展", "更从容"],
+    "moderate": ["节奏自然", "平稳"],
+    "fast": ["节奏更紧凑", "推进感"]
+  },
+  "range_to_prompt_fragments": {
+    "low": ["音区偏低", "厚实"],
+    "medium": ["音区适中", "均衡"],
+    "high": ["音区偏高", "通透"]
+  },
+  "singing_method_to_prompt_fragments": {
+    "pop": ["流行感更强"],
+    "bel_canto": ["美声感", "共鸣更饱满"]
+  },
+  "default_prompt_fragments": ["自然", "稳定", "歌唱性"]
+}

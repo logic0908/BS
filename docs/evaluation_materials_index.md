@@ -13,6 +13,16 @@
 ## 消融实验
 
 - [effect_ablation_report.md](./effect_ablation_report.md)
+- [training_experiment_report.md](./training_experiment_report.md)
+
+## 1000 样本核验产物（路径索引）
+
+- `runtime/eval_reports/film_strength_ablation_1000.json`
+- `runtime/eval_reports/condition_mode_ablation_1000.json`
+- `runtime/eval_reports/objective_metrics_1000.json`
+- `runtime/eval_reports/objective_metrics_1000.csv`
+- `runtime/eval_reports/objective_metrics_1000.md`
+- `runtime/eval_reports/figure_index.md`
 
 ## Prompt 与案例
 

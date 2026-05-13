@@ -3,6 +3,6 @@
   "use_trained": true,
   "adapter_version": "v0.7_trained_mlp_with_rule_based_fallback",
   "adapter_type": "trained_mlp",
-  "adapter_checkpoint_path": "/home/featurize/work/BS/runtime/style_adapter/text_style_adapter_v1.pt",
+  "adapter_checkpoint_path": "/home/featurize/work/BS/runtime/style_adapter/text_style_adapter_1000.pt",
   "trainable": true
 }
