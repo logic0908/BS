@@ -5,6 +5,7 @@ type AudioSpectrumComparePanelProps = {
   outputUrl?: string | null
   inputLabel?: string
   outputLabel?: string
+  onMetadata?: (metadata: SpectrumMetadata) => void
 }
 
 type SpectrumStatus = 'missing' | 'loading' | 'ready' | 'error'
@@ -13,6 +14,18 @@ type SpectrumData = {
   timeBins: number
   freqBins: number
   values: Float32Array
+}
+
+type SpectrumMetadata = {
+  label: 'input' | 'output'
+  durationSeconds?: number
+  sampleRate?: number
+}
+
+type SpectrumPayload = {
+  spectrum: SpectrumData
+  durationSeconds: number
+  sampleRate: number
 }
 
 const CANVAS_HEIGHT = 140
@@ -26,6 +39,7 @@ export default function AudioSpectrumComparePanel({
   outputUrl = null,
   inputLabel = '上传音频',
   outputLabel = '转换后音频',
+  onMetadata,
 }: AudioSpectrumComparePanelProps) {
   const hasAnyAudio = Boolean(inputUrl || outputUrl)
   if (!hasAnyAudio) return null
@@ -35,8 +49,20 @@ export default function AudioSpectrumComparePanel({
       <details className="spectrum-details" open>
         <summary>频谱图对比</summary>
         <div className="spectrum-grid">
-          <SpectrumCard url={inputUrl} label={inputLabel} missingMessage="上传音频暂不可预览" />
-          <SpectrumCard url={outputUrl} label={outputLabel} missingMessage="转换后音频暂不可预览" />
+          <SpectrumCard
+            url={inputUrl}
+            label={inputLabel}
+            metadataLabel="input"
+            missingMessage="上传音频暂不可预览"
+            onMetadata={onMetadata}
+          />
+          <SpectrumCard
+            url={outputUrl}
+            label={outputLabel}
+            metadataLabel="output"
+            missingMessage="转换后音频暂不可预览"
+            onMetadata={onMetadata}
+          />
         </div>
       </details>
     </div>
@@ -46,11 +72,15 @@ export default function AudioSpectrumComparePanel({
 function SpectrumCard({
   url,
   label,
+  metadataLabel,
   missingMessage,
+  onMetadata,
 }: {
   url?: string | null
   label: string
+  metadataLabel: 'input' | 'output'
   missingMessage: string
+  onMetadata?: (metadata: SpectrumMetadata) => void
 }) {
   const [status, setStatus] = useState<SpectrumStatus>('missing')
   const [data, setData] = useState<SpectrumData | null>(null)
@@ -78,9 +108,14 @@ function SpectrumCard({
     setErrorReason(null)
 
     void generateSpectrumData(normalizedUrl, controller.signal)
-      .then((spectrum) => {
+      .then((payload) => {
         if (cancelled) return
-        setData(spectrum)
+        setData(payload.spectrum)
+        onMetadata?.({
+          label: metadataLabel,
+          durationSeconds: payload.durationSeconds,
+          sampleRate: payload.sampleRate,
+        })
         setStatus('ready')
       })
       .catch((error: unknown) => {
@@ -102,7 +137,7 @@ function SpectrumCard({
       cancelled = true
       controller.abort()
     }
-  }, [normalizedUrl])
+  }, [metadataLabel, normalizedUrl, onMetadata])
 
   useEffect(() => {
     if (status !== 'ready' || !data || !canvasRef.current) return
@@ -154,7 +189,7 @@ function SpectrumCard({
   )
 }
 
-async function generateSpectrumData(url: string, signal: AbortSignal): Promise<SpectrumData> {
+async function generateSpectrumData(url: string, signal: AbortSignal): Promise<SpectrumPayload> {
   const normalizedUrl = url.trim()
   if (!normalizedUrl) {
     throw new SpectrumRenderError('地址为空')
@@ -205,7 +240,11 @@ async function generateSpectrumData(url: string, signal: AbortSignal): Promise<S
       throw new SpectrumRenderError('音频解码失败')
     }
     const channelData = decoded.getChannelData(0)
-    return buildSpectrum(channelData, TIME_BINS, FREQ_BINS, FFT_SIZE)
+    return {
+      spectrum: buildSpectrum(channelData, TIME_BINS, FREQ_BINS, FFT_SIZE),
+      durationSeconds: decoded.duration,
+      sampleRate: decoded.sampleRate,
+    }
   } finally {
     await context.close().catch(() => undefined)
   }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 
 import './App.css'
@@ -35,9 +35,16 @@ type TaskUpdate = {
   message: string
 }
 
+type AudioRuntimeMetadata = {
+  durationSeconds?: number
+  sampleRate?: number
+}
+
 const FILE_SIZE_LIMIT = 10 * 1024 * 1024
 const DEFAULT_PRESET_ID = 'final_primary'
 const DEFAULT_SPEAKER = 'lain'
+const DEFAULT_FILM_STRENGTH = 0.1
+const FILM_STRENGTH_PRESETS = [0.05, 0.1, 0.15, 0.2]
 
 function App() {
   const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null)
@@ -48,6 +55,7 @@ function App() {
   const [selectedFilePreviewUrl, setSelectedFilePreviewUrl] = useState<string | null>(null)
   const [uploadInfo, setUploadInfo] = useState<UploadResponse | null>(null)
   const [vocalsId, setVocalsId] = useState<string | null>(null)
+  const [filmStrength, setFilmStrength] = useState<number>(DEFAULT_FILM_STRENGTH)
 
   const [promptText, setPromptText] = useState('')
 
@@ -58,6 +66,7 @@ function App() {
   const [statusMessage, setStatusMessage] = useState<string>('等待上传音频。')
 
   const [result, setResult] = useState<ProcessingResult | null>(null)
+  const [outputAudioMetadata, setOutputAudioMetadata] = useState<AudioRuntimeMetadata>({})
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [errorDetails, setErrorDetails] = useState<string | null>(null)
 
@@ -90,15 +99,6 @@ function App() {
   const conditionMode = useMemo(() => {
     return systemHealth?.sovits?.condition_mode ?? sovitsCheck?.sovits?.condition_mode ?? 'internal_film'
   }, [sovitsCheck?.sovits?.condition_mode, systemHealth?.sovits?.condition_mode])
-
-  const filmStrength = useMemo(() => {
-    return (
-      systemHealth?.text_conditioning?.film_strength ??
-      systemHealth?.sovits?.film_strength ??
-      sovitsCheck?.sovits?.film_strength ??
-      null
-    )
-  }, [sovitsCheck?.sovits?.film_strength, systemHealth?.sovits?.film_strength, systemHealth?.text_conditioning?.film_strength])
 
   const isRealSvc = useMemo(() => {
     if (typeof systemHealth?.mock_mode === 'boolean') return !systemHealth.mock_mode
@@ -219,6 +219,7 @@ function App() {
     setTaskStatus('idle')
     setTaskStage('')
     setTaskProgress(0)
+    setOutputAudioMetadata({})
     setErrorMessage(null)
     setErrorDetails(null)
     clearStyleEvidenceState()
@@ -321,6 +322,8 @@ function App() {
         vocals_id: vocalsId,
         prompt_text: promptText,
         style_prompt: promptText,
+        condition_mode: conditionMode,
+        film_strength: filmStrength,
         model_preset_id: modelPresetId,
         engine: 'sovits',
       })
@@ -354,6 +357,8 @@ function App() {
         outputAudioUrl,
         resultUrl,
         downloadUrl: outputAudioUrl,
+        duration_seconds: mergedMetadata.duration_seconds ?? null,
+        sample_rate: mergedMetadata.sample_rate ?? null,
         metadata: {
           ...mergedMetadata,
           task_id: mergedMetadata.task_id ?? createdTaskId,
@@ -396,6 +401,27 @@ function App() {
     metadata?.input_url ??
     null
   const outputSpectrumUrl = metadata?.output_url ?? result?.outputAudioUrl ?? result?.downloadUrl ?? null
+  const displayDurationSeconds = pickPositiveNumber(
+    metadata?.duration_seconds,
+    result?.duration_seconds,
+    outputAudioMetadata.durationSeconds,
+  )
+  const displaySampleRate = pickPositiveNumber(
+    metadata?.sample_rate,
+    result?.sample_rate,
+    outputAudioMetadata.sampleRate,
+  )
+  const handleSpectrumMetadata = useCallback((runtimeMetadata: {
+    label: 'input' | 'output'
+    durationSeconds?: number
+    sampleRate?: number
+  }) => {
+    if (runtimeMetadata.label !== 'output') return
+    setOutputAudioMetadata((current) => ({
+      durationSeconds: pickPositiveNumber(current.durationSeconds, runtimeMetadata.durationSeconds) ?? current.durationSeconds,
+      sampleRate: pickPositiveNumber(current.sampleRate, runtimeMetadata.sampleRate) ?? current.sampleRate,
+    }))
+  }, [])
   const convertButtonLabel = getConvertButtonLabel({ inputAudio, vocalsId, promptText, isConverting })
   const resultFileName = basenamePath(metadata?.final_output_path ?? `${result?.taskId || 'result'}.wav`)
   const malePromptMismatchWarning =
@@ -488,6 +514,34 @@ function App() {
                 ))}
               </div>
 
+              <label htmlFor="film-strength-slider" className="field-label">
+                注入强度（{filmStrength.toFixed(2)}）
+              </label>
+              <input
+                id="film-strength-slider"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={filmStrength}
+                onChange={(event) => setFilmStrength(Number(event.target.value))}
+                disabled={isConverting}
+              />
+              <div className="chip-row" aria-label="注入强度快捷值">
+                {FILM_STRENGTH_PRESETS.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className="chip-button"
+                    onClick={() => setFilmStrength(value)}
+                    disabled={isConverting}
+                  >
+                    {value.toFixed(2)}
+                  </button>
+                ))}
+              </div>
+              <div className="char-count">建议范围：0.05-0.20；过高可能影响音质稳定性。</div>
+
               <div className="compact-meta-grid" data-testid="task-main-fields">
                 <MiniMeta label={labelOf('condition_mode')} value={valueLabelOf(conditionMode)} />
                 <MiniMeta label={labelOf('film_strength')} value={formatFilmStrength(filmStrength)} />
@@ -544,15 +598,28 @@ function App() {
               {status === AppStatus.SUCCEEDED && result && (
                 <div className="success-box">
                   <strong>转换成功</strong>
-                  <audio controls src={result.outputAudioUrl} className="result-audio" />
+                  <audio
+                    controls
+                    src={result.outputAudioUrl}
+                    className="result-audio"
+                    onLoadedMetadata={(event) => {
+                      const duration = event.currentTarget.duration
+                      if (Number.isFinite(duration) && duration > 0) {
+                        setOutputAudioMetadata((current) => ({
+                          ...current,
+                          durationSeconds: duration,
+                        }))
+                      }
+                    }}
+                  />
                   <a href={result.downloadUrl} download={`converted_${result.taskId}.wav`} className="download-button">下载结果</a>
 
                   <div className="compact-meta-grid" data-testid="result-main-fields">
                     <PathMiniMeta label={labelOf('result_url')} value={valueOrFallback(result.resultUrl, '未返回')} />
                     <PathMiniMeta label={labelOf('output_file')} value={resultFileName} />
                     <PathMiniMeta label={labelOf('output_path')} value={valueOrFallback(metadata?.final_output_path, '未返回')} />
-                    <MiniMeta label={labelOf('duration_seconds')} value={formatSeconds(metadata?.duration_seconds)} />
-                    <MiniMeta label={labelOf('sample_rate')} value={formatSampleRate(metadata?.sample_rate)} />
+                    <MiniMeta label={labelOf('duration_seconds')} value={formatSeconds(displayDurationSeconds)} />
+                    <MiniMeta label={labelOf('sample_rate')} value={formatSampleRate(displaySampleRate)} />
                   </div>
 
                   <AudioSpectrumComparePanel
@@ -560,6 +627,7 @@ function App() {
                     outputUrl={outputSpectrumUrl}
                     inputLabel="上传音频"
                     outputLabel="转换后音频"
+                    onMetadata={handleSpectrumMetadata}
                   />
                 </div>
               )}
@@ -578,7 +646,7 @@ function App() {
 
               <div className="compact-meta-grid" data-testid="tech-main-fields">
                 <MiniMeta label={labelOf('condition_mode')} value={valueLabelOf(metadata?.condition_mode ?? conditionMode)} />
-                <MiniMeta label={labelOf('film_strength')} value={formatFilmStrength(metadata?.film_strength ?? filmStrength)} />
+                <MiniMeta label={labelOf('film_strength')} value={formatFilmStrength(pickFiniteNumber(metadata?.film_strength, filmStrength))} />
                 <MiniMeta label={labelOf('executed_internal_film')} value={valueLabelOf(metadata?.executed_internal_film)} />
                 <MiniMeta label={labelOf('text_style_adapter_loaded')} value={valueLabelOf(metadata?.text_style_adapter_loaded)} />
                 <MiniMeta label={labelOf('adapter_mode')} value={valueLabelOf(metadata?.adapter_mode)} />
@@ -856,6 +924,22 @@ function valueOrFallback(value: unknown, fallback: string): string {
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : fallback
   if (typeof value === 'boolean') return value ? 'true' : 'false'
   return fallback
+}
+
+function pickPositiveNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const n = Number(value)
+    if (Number.isFinite(n) && n > 0) return n
+  }
+  return null
+}
+
+function pickFiniteNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const n = Number(value)
+    if (Number.isFinite(n) && n >= 0) return n
+  }
+  return null
 }
 
 function readAxiosMessage(error: unknown, fallback: string): string {

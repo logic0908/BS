@@ -161,8 +161,12 @@ describe('App compact localized dashboard', () => {
   let root: Root
   let canvasContextSpy: { mockRestore: () => void } | null = null
   let fetchMock: ReturnType<typeof vi.fn>
+  let decodedDuration = 8.1
+  let decodedSampleRate = 48000
 
   beforeEach(() => {
+    decodedDuration = 8.1
+    decodedSampleRate = 48000
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)
@@ -190,6 +194,8 @@ describe('App compact localized dashboard', () => {
     class MockAudioContext {
       async decodeAudioData(_input: ArrayBuffer) {
         return {
+          duration: decodedDuration,
+          sampleRate: decodedSampleRate,
           getChannelData: () => {
             const values = new Float32Array(2048)
             values.fill(0.1)
@@ -314,6 +320,54 @@ describe('App compact localized dashboard', () => {
     expect(screen.queryByText('转换前后音频可以对比播放')).not.toBeInTheDocument()
   })
 
+  it('注入强度控件默认 0.10，支持 0-1 范围和 0.05 步长，并随请求发送', async () => {
+    mockedAxios.post.mockImplementation(async (url: string, payload?: Record<string, unknown>) => {
+      if (url === '/api/v1/upload') return uploadOk
+      if (url === '/api/v1/convert') return { data: { task_id: 'task-1', payload } }
+      if (url === '/api/v1/style-analysis/compare') return { data: styleEvidenceResponse() }
+      throw new Error(`Unexpected POST ${url}`)
+    })
+
+    mockedAxios.get.mockImplementation(async (url: string) => {
+      if (url === '/api/v1/system/health') return defaultHealth
+      if (url === '/api/v1/system/sovits-check') return defaultCheck
+      if (url === '/api/v1/tasks/task-1') return { data: successTaskData() }
+      if (url === '/api/v1/tasks/task-1/result') return { data: new Blob(['wav']) }
+      throw new Error(`Unexpected GET ${url}`)
+    })
+
+    await renderApp()
+    await selectAndUpload()
+
+    const slider = container.querySelector('#film-strength-slider') as HTMLInputElement
+    expect(slider).toBeTruthy()
+    expect(slider.min).toBe('0')
+    expect(slider.max).toBe('1')
+    expect(slider.step).toBe('0.05')
+    expect(slider.value).toBe('0.1')
+    expect(screen.getByText('注入强度（0.10）')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.change(slider, { target: { value: '0.35' } })
+      await flush()
+    })
+    expect(screen.getByText('注入强度（0.35）')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('风格提示词'), { target: { value: '清亮风格' } })
+      await flush()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '开始风格转换' }))
+      await flush()
+    })
+    await waitFor(() => expect(screen.getByText('转换成功')).toBeInTheDocument())
+
+    const convertCall = mockedAxios.post.mock.calls.find((call) => call[0] === '/api/v1/convert')
+    expect(convertCall).toBeTruthy()
+    expect((convertCall?.[1] as Record<string, unknown>)?.film_strength).toBe(0.35)
+  })
+
   it('选择上传文件后优先使用本地 blob URL 生成上传频谱', async () => {
     const createObjectURL = globalThis.URL.createObjectURL as unknown as ReturnType<typeof vi.fn>
     createObjectURL.mockReset()
@@ -346,6 +400,67 @@ describe('App compact localized dashboard', () => {
     await runSuccessFlow('清亮风格', { output_url: '' })
 
     expect(screen.getByText('转换后音频暂不可预览')).toBeInTheDocument()
+  })
+
+  it('metadata duration/sample_rate 为 0 且无运行时元数据时显示未返回', async () => {
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      headers: {
+        get: (key: string) => (key.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null),
+      },
+      arrayBuffer: async () => new ArrayBuffer(16),
+    }))
+
+    await runSuccessFlow('清亮风格', { duration_seconds: 0, sample_rate: 0 })
+
+    const resultMain = screen.getByTestId('result-main-fields').textContent ?? ''
+    expect(resultMain).toContain('音频时长未返回')
+    expect(resultMain).toContain('采样率未返回')
+    expect(resultMain).not.toContain('0.00 秒')
+    expect(resultMain).not.toContain('0 Hz')
+  })
+
+  it('output audio loadedmetadata 可回填时长显示', async () => {
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      headers: {
+        get: (key: string) => (key.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null),
+      },
+      arrayBuffer: async () => new ArrayBuffer(16),
+    }))
+
+    await runSuccessFlow('清亮风格', { duration_seconds: 0, sample_rate: 0 })
+
+    const outputAudio = container.querySelector('.result-audio') as HTMLAudioElement
+    Object.defineProperty(outputAudio, 'duration', {
+      value: 8.5,
+      configurable: true,
+    })
+
+    await act(async () => {
+      fireEvent.loadedMetadata(outputAudio)
+      await flush()
+    })
+
+    expect(screen.getByText('8.50 秒')).toBeInTheDocument()
+  })
+
+  it('频谱解码成功时回填采样率显示', async () => {
+    decodedSampleRate = 32000
+    await runSuccessFlow('清亮风格', { sample_rate: 0 })
+
+    await waitFor(() => {
+      expect(screen.getByText('32000 Hz')).toBeInTheDocument()
+    })
+  })
+
+  it('技术链路优先显示后端返回的注入强度', async () => {
+    await runSuccessFlow('清亮风格', { film_strength: 0.45 })
+
+    const techMain = screen.getByTestId('tech-main-fields').textContent ?? ''
+    expect(techMain).toContain('注入强度0.45')
   })
 
   it('input 频谱请求返回 text/html 时显示上传频谱失败文案', async () => {

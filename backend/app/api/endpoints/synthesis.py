@@ -36,6 +36,7 @@ class ConvertRequest(BaseModel):
     style_strength: float = Field(default=0.6, ge=0.0, le=1.0)
     style_preset_id: str | None = None
     model_preset_id: str | None = None
+    film_strength: float = Field(default=0.10, ge=0.0, le=1.0)
     transpose: int = Field(default=0, ge=-24, le=24)
     f0_method: str | None = None
     auto_predict_f0: bool = False
@@ -67,6 +68,7 @@ def _dispatch_svc_convert(
     style_prompt: str | None = None,
     style_preset_id: str | None = None,
     model_preset_id: str | None = None,
+    film_strength: float = 0.10,
     transpose: int | None = None,
     f0_method: str | None = None,
     auto_predict_f0: bool | None = None,
@@ -83,6 +85,7 @@ def _dispatch_svc_convert(
         "style_strength": style_strength,
         "style_preset_id": style_preset_id,
         "model_preset_id": model_preset_id,
+        "film_strength": film_strength,
         "transpose": transpose,
         "f0_method": f0_method,
         "auto_predict_f0": auto_predict_f0,
@@ -97,7 +100,9 @@ def _dispatch_svc_convert(
             from app.workers.svc_tasks import process_svc_task
         except ModuleNotFoundError:  # pragma: no cover
             from backend.app.workers.svc_tasks import process_svc_task
-        process_svc_task.apply_async(kwargs=kwargs, queue="svc")
+        celery_kwargs = dict(kwargs)
+        celery_kwargs.pop("film_strength", None)
+        process_svc_task.apply_async(kwargs=celery_kwargs, queue="svc")
         return
     background_tasks.add_task(svc_task_service.process_task, **kwargs)
 
@@ -393,6 +398,7 @@ async def convert_audio(
         style_strength=request.style_strength,
         style_preset_id=request.style_preset_id,
         model_preset_id=request.model_preset_id,
+        film_strength=request.film_strength,
         transpose=request.transpose,
         f0_method=request.f0_method,
         auto_predict_f0=request.auto_predict_f0,

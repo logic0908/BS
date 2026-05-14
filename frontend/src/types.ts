@@ -121,6 +121,8 @@ export interface ProcessingResult {
   outputAudioUrl: string
   resultUrl: string
   downloadUrl: string
+  duration_seconds?: number | null
+  sample_rate?: number | null
   metadata: ResultMetadata
 }
 

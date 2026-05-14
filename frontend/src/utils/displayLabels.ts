@@ -72,13 +72,15 @@ export function valueLabelOf(value: unknown): string {
 }
 
 export function formatSeconds(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '未返回'
   const n = Number(value)
-  if (!Number.isFinite(n)) return '未返回'
+  if (!Number.isFinite(n) || n <= 0) return '未返回'
   return `${n.toFixed(2)} 秒`
 }
 
 export function formatSampleRate(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '未返回'
   const n = Number(value)
-  if (!Number.isFinite(n)) return '未返回'
+  if (!Number.isFinite(n) || n <= 0) return '未返回'
   return `${Math.round(n)} Hz`
 }

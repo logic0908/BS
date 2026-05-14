@@ -947,6 +947,7 @@ def test_convert_route_defaults_to_sovits_and_passes_style_preset_id(mocker):
                 style_prompt="清澈少年感",
                 style_preset_id="pop_bright",
                 model_preset_id="final_primary",
+                film_strength=0.35,
                 transpose=-2,
                 f0_method="rmvpe",
                 auto_predict_f0=False,
@@ -966,6 +967,7 @@ def test_convert_route_defaults_to_sovits_and_passes_style_preset_id(mocker):
     assert len(background_tasks.tasks) == 1
     assert background_tasks.tasks[0].kwargs["style_preset_id"] == "pop_bright"
     assert background_tasks.tasks[0].kwargs["model_preset_id"] == "final_primary"
+    assert background_tasks.tasks[0].kwargs["film_strength"] == 0.35
     assert background_tasks.tasks[0].kwargs["transpose"] == -2
     assert background_tasks.tasks[0].kwargs["f0_method"] == "rmvpe"
     assert background_tasks.tasks[0].kwargs["slice_db"] == -38.0

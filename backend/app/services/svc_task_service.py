@@ -169,6 +169,7 @@ class SvcTaskService:
         style_prompt: str | None = None,
         style_preset_id: str | None = None,
         model_preset_id: str | None = None,
+        film_strength: float = 0.10,
         transpose: int | None = None,
         f0_method: str | None = None,
         auto_predict_f0: bool | None = None,
@@ -200,6 +201,7 @@ class SvcTaskService:
         requested_adapter_mode_label = normalized_requested_adapter_mode or "auto"
         effective_adapter_mode = "pending"
         conversion_params_request = {
+            "film_strength": film_strength,
             "f0_method": f0_method,
             "auto_predict_f0": auto_predict_f0,
             "transpose": transpose,
@@ -238,6 +240,7 @@ class SvcTaskService:
                     "style_strength": style_strength,
                     "style_preset_id": style_preset_id,
                     "model_preset_id": model_preset_id,
+                    "film_strength": film_strength,
                     "transpose": transpose,
                     "f0_method": f0_method,
                     "auto_predict_f0": auto_predict_f0,
@@ -362,21 +365,29 @@ class SvcTaskService:
                 debug_dir=debug_dir,
             )
             self._write_json(debug_dir, "conversion_params.json", conversion_params_summary)
-            output = engine.convert(
-                input_vocals_path=upload.vocals_path,
-                prompt_text=resolved_style_prompt,
-                style_strength=effective_style_strength,
-                output_path=target_output,
-                debug_dir=debug_dir,
-                style_preset=selected_style,
-                task_id=task_id,
-                runtime_context=runtime_context,
-                conversion_params=conversion_params_request,
-                allow_preset_fallback=allow_preset_fallback,
-                style_prompt=resolved_style_prompt,
-                style_emb_path=(style_embedding_paths or {}).get("style_embedding_pt"),
-                style_dim=(text_encoding_summary or {}).get("embedding_dim"),
-            )
+            previous_film_strength = os.environ.get("SOVITS_FILM_STRENGTH")
+            os.environ["SOVITS_FILM_STRENGTH"] = str(film_strength)
+            try:
+                output = engine.convert(
+                    input_vocals_path=upload.vocals_path,
+                    prompt_text=resolved_style_prompt,
+                    style_strength=effective_style_strength,
+                    output_path=target_output,
+                    debug_dir=debug_dir,
+                    style_preset=selected_style,
+                    task_id=task_id,
+                    runtime_context=runtime_context,
+                    conversion_params=conversion_params_request,
+                    allow_preset_fallback=allow_preset_fallback,
+                    style_prompt=resolved_style_prompt,
+                    style_emb_path=(style_embedding_paths or {}).get("style_embedding_pt"),
+                    style_dim=(text_encoding_summary or {}).get("embedding_dim"),
+                )
+            finally:
+                if previous_film_strength is None:
+                    os.environ.pop("SOVITS_FILM_STRENGTH", None)
+                else:
+                    os.environ["SOVITS_FILM_STRENGTH"] = previous_film_strength
             if not os.path.exists(output):
                 raise RuntimeError(f"converted output missing: {output}")
 
