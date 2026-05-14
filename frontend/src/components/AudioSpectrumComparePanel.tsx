@@ -54,6 +54,7 @@ function SpectrumCard({
 }) {
   const [status, setStatus] = useState<SpectrumStatus>('missing')
   const [data, setData] = useState<SpectrumData | null>(null)
+  const [errorReason, setErrorReason] = useState<string | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
 
   const normalizedUrl = useMemo(() => {
@@ -66,6 +67,7 @@ function SpectrumCard({
     if (!normalizedUrl) {
       setStatus('missing')
       setData(null)
+      setErrorReason(null)
       return
     }
 
@@ -73,6 +75,7 @@ function SpectrumCard({
     let cancelled = false
     setStatus('loading')
     setData(null)
+    setErrorReason(null)
 
     void generateSpectrumData(normalizedUrl, controller.signal)
       .then((spectrum) => {
@@ -84,7 +87,15 @@ function SpectrumCard({
         if (cancelled) return
         if (isAbortError(error)) return
         setData(null)
+        const reason = toReason(error)
+        setErrorReason(reason)
         setStatus('error')
+        console.warn('[AudioSpectrumComparePanel] 频谱生成失败', {
+          label,
+          url: normalizedUrl,
+          reason,
+          error,
+        })
       })
 
     return () => {
@@ -98,15 +109,30 @@ function SpectrumCard({
 
     const canvas = canvasRef.current
 
-    const render = () => {
-      drawSpectrum(canvas, data)
+    const render = (): boolean => {
+      try {
+        drawSpectrum(canvas, data)
+        return true
+      } catch (error) {
+        const reason = toReason(error)
+        setStatus('error')
+        setErrorReason(reason)
+        console.warn('[AudioSpectrumComparePanel] 频谱绘制失败', {
+          label,
+          reason,
+          error,
+        })
+        return false
+      }
     }
 
-    render()
+    if (!render()) return
 
     if (typeof ResizeObserver === 'undefined') return
 
-    const observer = new ResizeObserver(() => render())
+    const observer = new ResizeObserver(() => {
+      render()
+    })
     observer.observe(canvas)
     return () => {
       observer.disconnect()
@@ -118,31 +144,66 @@ function SpectrumCard({
       <h4>{label}</h4>
       {status === 'missing' && <p className="spectrum-text">{missingMessage}</p>}
       {status === 'loading' && <p className="spectrum-text">频谱生成中...</p>}
-      {status === 'error' && <p className="spectrum-text spectrum-warning">频谱生成失败</p>}
+      {status === 'error' && (
+        <p className="spectrum-text spectrum-warning" title={errorReason ? `原因：${errorReason}` : undefined}>
+          {label}频谱生成失败
+        </p>
+      )}
       {status === 'ready' && <canvas ref={canvasRef} className="spectrum-canvas" aria-label={`${label}频谱图`} />}
     </article>
   )
 }
 
 async function generateSpectrumData(url: string, signal: AbortSignal): Promise<SpectrumData> {
-  const response = await fetch(url, { signal })
+  const normalizedUrl = url.trim()
+  if (!normalizedUrl) {
+    throw new SpectrumRenderError('地址为空')
+  }
+
+  let response: Response
+  try {
+    response = await fetch(normalizedUrl, { signal })
+  } catch (error) {
+    if (isAbortError(error)) throw error
+    throw new SpectrumRenderError('请求失败')
+  }
+
   if (!response.ok) {
-    throw new Error('fetch failed')
+    throw new SpectrumRenderError('请求失败')
+  }
+
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  if (
+    contentType &&
+    !contentType.startsWith('audio/') &&
+    !contentType.includes('application/octet-stream')
+  ) {
+    throw new SpectrumRenderError('返回内容不是音频')
   }
 
   const arrayBuffer = await response.arrayBuffer()
+  if (!arrayBuffer.byteLength) {
+    throw new SpectrumRenderError('音频数据为空')
+  }
   if (signal.aborted) {
     throw new DOMException('aborted', 'AbortError')
   }
 
-  const AudioContextClass = window.AudioContext
+  const AudioContextClass =
+    window.AudioContext ||
+    (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AudioContextClass) {
-    throw new Error('audio context unavailable')
+    throw new SpectrumRenderError('音频解码失败')
   }
 
   const context = new AudioContextClass()
   try {
-    const decoded = await context.decodeAudioData(arrayBuffer.slice(0))
+    let decoded: AudioBuffer
+    try {
+      decoded = await context.decodeAudioData(arrayBuffer.slice(0))
+    } catch {
+      throw new SpectrumRenderError('音频解码失败')
+    }
     const channelData = decoded.getChannelData(0)
     return buildSpectrum(channelData, TIME_BINS, FREQ_BINS, FFT_SIZE)
   } finally {
@@ -196,7 +257,9 @@ function buildSpectrum(samples: Float32Array, timeBins: number, freqBins: number
 
 function drawSpectrum(canvas: HTMLCanvasElement, data: SpectrumData) {
   const context = canvas.getContext('2d')
-  if (!context) return
+  if (!context) {
+    throw new SpectrumRenderError('Canvas 初始化失败')
+  }
 
   const dpr = Math.max(1, window.devicePixelRatio || 1)
   const width = Math.max(1, Math.floor(canvas.clientWidth))
@@ -258,6 +321,21 @@ function isAbortError(error: unknown): boolean {
   }
   if (!error || typeof error !== 'object') return false
   return (error as { name?: string }).name === 'AbortError'
+}
+
+function toReason(error: unknown): string {
+  if (error instanceof SpectrumRenderError) return error.reason
+  return '频谱生成失败'
+}
+
+class SpectrumRenderError extends Error {
+  reason: string
+
+  constructor(reason: string) {
+    super(reason)
+    this.name = 'SpectrumRenderError'
+    this.reason = reason
+  }
 }
 
 function buildDftKernels(freqBins: number, fftSize: number): Array<{ cos: Float32Array; sin: Float32Array }> {

@@ -48,6 +48,7 @@ export interface UploadResponse {
   is_vocal_only?: boolean
   input_url?: string | null
   vocals_url?: string | null
+  file_url?: string | null
   input_audio_path?: string | null
   input_vocals_path?: string | null
   input_quality_summary?: InputQualitySummary | null

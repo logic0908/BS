@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 
 import './App.css'
@@ -45,6 +45,7 @@ function App() {
 
   const [status, setStatus] = useState<AppStatus>(AppStatus.IDLE)
   const [inputAudio, setInputAudio] = useState<AudioFile | null>(null)
+  const [selectedFilePreviewUrl, setSelectedFilePreviewUrl] = useState<string | null>(null)
   const [uploadInfo, setUploadInfo] = useState<UploadResponse | null>(null)
   const [vocalsId, setVocalsId] = useState<string | null>(null)
 
@@ -63,6 +64,8 @@ function App() {
   const [styleEvidenceRequest, setStyleEvidenceRequest] = useState<StyleEvidenceRequest | null>(null)
   const [styleEvidence, setStyleEvidence] = useState<StyleEvidenceCompareResponse | null>(null)
   const [styleEvidenceWarning, setStyleEvidenceWarning] = useState<string | null>(null)
+  const selectedPreviewRef = useRef<string | null>(null)
+  const outputPreviewRef = useRef<string | null>(null)
 
   const isUploading = status === AppStatus.UPLOADING
   const isConverting = status === AppStatus.CONVERTING
@@ -182,15 +185,23 @@ function App() {
   }, [status, styleEvidenceRequest])
 
   useEffect(() => {
+    selectedPreviewRef.current = selectedFilePreviewUrl
+  }, [selectedFilePreviewUrl])
+
+  useEffect(() => {
+    outputPreviewRef.current = result?.outputAudioUrl ?? null
+  }, [result?.outputAudioUrl])
+
+  useEffect(() => {
     return () => {
-      if (inputAudio?.url) {
-        window.URL.revokeObjectURL(inputAudio.url)
+      if (selectedPreviewRef.current) {
+        window.URL.revokeObjectURL(selectedPreviewRef.current)
       }
-      if (result?.outputAudioUrl) {
-        window.URL.revokeObjectURL(result.outputAudioUrl)
+      if (outputPreviewRef.current) {
+        window.URL.revokeObjectURL(outputPreviewRef.current)
       }
     }
-  }, [inputAudio?.url, result?.outputAudioUrl])
+  }, [])
 
   const clearStyleEvidenceState = () => {
     setStyleEvidence(null)
@@ -201,6 +212,7 @@ function App() {
   const clearResultState = () => {
     if (result?.outputAudioUrl) {
       window.URL.revokeObjectURL(result.outputAudioUrl)
+      outputPreviewRef.current = null
     }
     setResult(null)
     setTaskId(null)
@@ -224,8 +236,9 @@ function App() {
       return
     }
 
-    if (inputAudio?.url) {
-      window.URL.revokeObjectURL(inputAudio.url)
+    if (selectedPreviewRef.current) {
+      window.URL.revokeObjectURL(selectedPreviewRef.current)
+      selectedPreviewRef.current = null
     }
 
     clearResultState()
@@ -233,6 +246,8 @@ function App() {
     setVocalsId(null)
 
     const objectUrl = window.URL.createObjectURL(file)
+    setSelectedFilePreviewUrl(objectUrl)
+    selectedPreviewRef.current = objectUrl
     const nextAudio: AudioFile = {
       file,
       url: objectUrl,
@@ -372,6 +387,15 @@ function App() {
 
   const progressPercent = Math.max(0, Math.min(100, taskProgress))
   const metadata = result?.metadata ?? null
+  const inputSpectrumUrl =
+    selectedFilePreviewUrl ??
+    uploadInfo?.input_url ??
+    uploadInfo?.vocals_url ??
+    uploadInfo?.file_url ??
+    result?.inputAudioUrl ??
+    metadata?.input_url ??
+    null
+  const outputSpectrumUrl = metadata?.output_url ?? result?.outputAudioUrl ?? result?.downloadUrl ?? null
   const convertButtonLabel = getConvertButtonLabel({ inputAudio, vocalsId, promptText, isConverting })
   const resultFileName = basenamePath(metadata?.final_output_path ?? `${result?.taskId || 'result'}.wav`)
   const malePromptMismatchWarning =
@@ -532,8 +556,8 @@ function App() {
                   </div>
 
                   <AudioSpectrumComparePanel
-                    inputUrl={result.inputAudioUrl ?? metadata?.input_url ?? uploadInfo?.input_url ?? null}
-                    outputUrl={metadata?.output_url ?? result.outputAudioUrl ?? null}
+                    inputUrl={inputSpectrumUrl}
+                    outputUrl={outputSpectrumUrl}
                     inputLabel="上传音频"
                     outputLabel="转换后音频"
                   />

@@ -160,6 +160,7 @@ describe('App compact localized dashboard', () => {
   let container: HTMLDivElement
   let root: Root
   let canvasContextSpy: { mockRestore: () => void } | null = null
+  let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
     container = document.createElement('div')
@@ -176,6 +177,32 @@ describe('App compact localized dashboard', () => {
         revokeObjectURL: vi.fn(),
       }),
     )
+
+    fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: {
+        get: (key: string) => (key.toLowerCase() === 'content-type' ? 'audio/wav' : null),
+      },
+      arrayBuffer: async () => new ArrayBuffer(32),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    class MockAudioContext {
+      async decodeAudioData(_input: ArrayBuffer) {
+        return {
+          getChannelData: () => {
+            const values = new Float32Array(2048)
+            values.fill(0.1)
+            return values
+          },
+        } as unknown as AudioBuffer
+      }
+
+      async close() {
+        return undefined
+      }
+    }
+    vi.stubGlobal('AudioContext', MockAudioContext)
 
     canvasContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => {
       const gradient = { addColorStop: vi.fn() } as unknown as CanvasGradient
@@ -287,6 +314,22 @@ describe('App compact localized dashboard', () => {
     expect(screen.queryByText('转换前后音频可以对比播放')).not.toBeInTheDocument()
   })
 
+  it('选择上传文件后优先使用本地 blob URL 生成上传频谱', async () => {
+    const createObjectURL = globalThis.URL.createObjectURL as unknown as ReturnType<typeof vi.fn>
+    createObjectURL.mockReset()
+    createObjectURL
+      .mockImplementationOnce(() => 'blob:local-input-preview')
+      .mockImplementationOnce(() => 'blob:converted-output')
+
+    await runSuccessFlow('清亮风格')
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled()
+    })
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]))
+    expect(calledUrls).toContain('blob:local-input-preview')
+  })
+
   it('缺少 inputUrl 时显示“上传音频暂不可预览”', async () => {
     const createObjectURL = globalThis.URL.createObjectURL as unknown as ReturnType<typeof vi.fn>
     createObjectURL.mockReset()
@@ -303,6 +346,31 @@ describe('App compact localized dashboard', () => {
     await runSuccessFlow('清亮风格', { output_url: '' })
 
     expect(screen.getByText('转换后音频暂不可预览')).toBeInTheDocument()
+  })
+
+  it('input 频谱请求返回 text/html 时显示上传频谱失败文案', async () => {
+    fetchMock.mockReset()
+    fetchMock
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        headers: {
+          get: (key: string) => (key.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null),
+        },
+        arrayBuffer: async () => new ArrayBuffer(16),
+      }))
+      .mockImplementation(async () => ({
+        ok: true,
+        headers: {
+          get: (key: string) => (key.toLowerCase() === 'content-type' ? 'audio/wav' : null),
+        },
+        arrayBuffer: async () => new ArrayBuffer(16),
+      }))
+
+    await runSuccessFlow('清亮风格')
+
+    await waitFor(() => {
+      expect(screen.getByText('上传音频频谱生成失败')).toBeInTheDocument()
+    })
   })
 
   it('主界面显示中文字段和中文值，且主显示区不出现英文原字段', async () => {
