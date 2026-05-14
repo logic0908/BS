@@ -159,6 +159,7 @@ const flush = async () => {
 describe('App compact localized dashboard', () => {
   let container: HTMLDivElement
   let root: Root
+  let canvasContextSpy: { mockRestore: () => void } | null = null
 
   beforeEach(() => {
     container = document.createElement('div')
@@ -176,6 +177,21 @@ describe('App compact localized dashboard', () => {
       }),
     )
 
+    canvasContextSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(() => {
+      const gradient = { addColorStop: vi.fn() } as unknown as CanvasGradient
+      return {
+        clearRect: vi.fn(),
+        fillRect: vi.fn(),
+        setTransform: vi.fn(),
+        createLinearGradient: vi.fn(() => gradient),
+        fillText: vi.fn(),
+        save: vi.fn(),
+        restore: vi.fn(),
+        translate: vi.fn(),
+        rotate: vi.fn(),
+      } as unknown as CanvasRenderingContext2D
+    })
+
     mockedAxios.get.mockImplementation(async (url: string) => {
       if (url === '/api/v1/system/health') return defaultHealth
       if (url === '/api/v1/system/sovits-check') return defaultCheck
@@ -189,6 +205,7 @@ describe('App compact localized dashboard', () => {
       await flush()
     })
     container.remove()
+    canvasContextSpy?.mockRestore()
     vi.unstubAllGlobals()
   })
 
@@ -211,7 +228,7 @@ describe('App compact localized dashboard', () => {
     })
   }
 
-  async function runSuccessFlow(prompt = '清亮少年感男声') {
+  async function runSuccessFlow(prompt = '清亮少年感男声', metadataOverrides?: Record<string, unknown>) {
     mockedAxios.post.mockImplementation(async (url: string) => {
       if (url === '/api/v1/upload') return uploadOk
       if (url === '/api/v1/convert') return { data: { task_id: 'task-1' } }
@@ -222,7 +239,7 @@ describe('App compact localized dashboard', () => {
     mockedAxios.get.mockImplementation(async (url: string) => {
       if (url === '/api/v1/system/health') return defaultHealth
       if (url === '/api/v1/system/sovits-check') return defaultCheck
-      if (url === '/api/v1/tasks/task-1') return { data: successTaskData() }
+      if (url === '/api/v1/tasks/task-1') return { data: successTaskData(metadataOverrides) }
       if (url === '/api/v1/tasks/task-1/result') return { data: new Blob(['wav']) }
       throw new Error(`Unexpected GET ${url}`)
     })
@@ -253,6 +270,39 @@ describe('App compact localized dashboard', () => {
 
     expect(screen.queryByText('转换前后音频对比')).not.toBeInTheDocument()
     expect(screen.queryByText('转换前后音频可以对比播放')).not.toBeInTheDocument()
+  })
+
+  it('转换成功后显示频谱图对比，并保留结果/指标/技术链路主结构', async () => {
+    await runSuccessFlow()
+
+    expect(screen.getByText('转换结果')).toBeInTheDocument()
+    expect(screen.getByText('关键指标对比')).toBeInTheDocument()
+    expect(screen.getByText('技术链路')).toBeInTheDocument()
+
+    expect(screen.getByText('频谱图对比')).toBeInTheDocument()
+    expect(screen.getAllByText('上传音频').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('转换后音频').length).toBeGreaterThan(0)
+
+    expect(screen.queryByText('转换前后音频对比')).not.toBeInTheDocument()
+    expect(screen.queryByText('转换前后音频可以对比播放')).not.toBeInTheDocument()
+  })
+
+  it('缺少 inputUrl 时显示“上传音频暂不可预览”', async () => {
+    const createObjectURL = globalThis.URL.createObjectURL as unknown as ReturnType<typeof vi.fn>
+    createObjectURL.mockReset()
+    createObjectURL
+      .mockImplementationOnce(() => '')
+      .mockImplementation(() => `blob:mock-${Math.random()}`)
+
+    await runSuccessFlow('清亮风格')
+
+    expect(screen.getByText('上传音频暂不可预览')).toBeInTheDocument()
+  })
+
+  it('缺少 outputUrl 时显示“转换后音频暂不可预览”', async () => {
+    await runSuccessFlow('清亮风格', { output_url: '' })
+
+    expect(screen.getByText('转换后音频暂不可预览')).toBeInTheDocument()
   })
 
   it('主界面显示中文字段和中文值，且主显示区不出现英文原字段', async () => {

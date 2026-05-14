@@ -432,6 +432,78 @@ p {
   line-height: 1.45;
 }
 
+.spectrum-compare {
+  margin-top: 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.25);
+  padding-top: 10px;
+}
+
+.spectrum-details {
+  border: 1px solid #dbe4ef;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 8px 10px 10px;
+}
+
+.spectrum-details summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.spectrum-grid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.spectrum-card {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  padding: 8px;
+  background: #f8fafc;
+  display: grid;
+  gap: 6px;
+}
+
+.spectrum-card h4 {
+  font-size: 12px;
+  color: #334155;
+}
+
+.spectrum-text {
+  min-height: 140px;
+  border-radius: 10px;
+  border: 1px dashed #cbd5e1;
+  background: #eef2ff;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+  padding: 6px;
+}
+
+.spectrum-warning {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fcd34d;
+}
+
+.spectrum-canvas {
+  width: 100%;
+  height: 140px;
+  max-height: 180px;
+  display: block;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+
 .upload-dropzone {
   position: relative;
   border: 2px dashed #93c5fd;
@@ -532,5 +604,11 @@ p {
 
   .badge {
     max-width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .spectrum-grid {
+    grid-template-columns: 1fr;
   }
 }

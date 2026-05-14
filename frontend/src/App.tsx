@@ -3,6 +3,7 @@ import axios from 'axios'
 
 import './App.css'
 import { compareStyleEvidence } from './api/styleAnalysis'
+import AudioSpectrumComparePanel from './components/AudioSpectrumComparePanel'
 import FileUpload from './components/FileUpload'
 import KeyMetricsComparePanel from './components/KeyMetricsComparePanel'
 import {
@@ -529,6 +530,13 @@ function App() {
                     <MiniMeta label={labelOf('duration_seconds')} value={formatSeconds(metadata?.duration_seconds)} />
                     <MiniMeta label={labelOf('sample_rate')} value={formatSampleRate(metadata?.sample_rate)} />
                   </div>
+
+                  <AudioSpectrumComparePanel
+                    inputUrl={result.inputAudioUrl ?? metadata?.input_url ?? uploadInfo?.input_url ?? null}
+                    outputUrl={metadata?.output_url ?? result.outputAudioUrl ?? null}
+                    inputLabel="上传音频"
+                    outputLabel="转换后音频"
+                  />
                 </div>
               )}
             </article>
