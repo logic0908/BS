@@ -1194,6 +1194,13 @@ def test_process_task_writes_style_embedding_adapter_and_audio_quality(mocker, t
     assert task.engine_details["adapter_mode"] == "rule_based"
     assert task.engine_details["adapter_version"] == "v1_rule_mlp_or_rule_based"
     assert task.engine_details["audio_quality_summary"]["duration_consistency"] >= 0.0
+    assert task.engine_details["duration_seconds"] == pytest.approx(1.0, abs=1e-6)
+    assert task.engine_details["sample_rate"] == 44100
+    assert task.engine_details["result_url"] == "/api/v1/tasks/task-embed/result"
+    assert task.engine_details["download_url"] == "/api/v1/tasks/task-embed/result"
+    assert task.engine_details["output_url"] == "/api/v1/tasks/task-embed/result"
+    assert task.engine_details["final_output_path"].endswith("converted.wav")
+    assert task.engine_details["input_vocals_path"].endswith("vocals.wav")
     assert convert_mock.call_args.kwargs["style_prompt"] == "清亮、少年感、男声"
     assert convert_mock.call_args.kwargs["style_emb_path"].endswith("style_embedding.pt")
 
@@ -1462,6 +1469,8 @@ def test_task_result_response_uses_ascii_safe_headers_and_filename(tmp_path):
             "device": "cuda",
             "selected_output": "/repo/results/test.flac",
             "final_output_path": str(output_path),
+            "duration_seconds": 1.0,
+            "sample_rate": 44100,
             "return_code": 0,
             "elapsed_seconds": 34.297,
             "sovits_command_debug_path": "/runtime/debug/task-result/sovits_command.txt",
@@ -1480,6 +1489,13 @@ def test_task_result_response_uses_ascii_safe_headers_and_filename(tmp_path):
     assert "x-svc-model-display-name" not in response.headers
     assert "x-svc-selected-output" not in response.headers
     assert task_payload["gpu_telemetry_debug_path"] == "/runtime/debug/task-result/gpu_telemetry.txt"
+    assert task_payload["duration_seconds"] == 1.0
+    assert task_payload["sample_rate"] == 44100
+    assert task_payload["output_url"] == "/api/v1/tasks/task-result/result"
+    assert task_payload["download_url"] == "/api/v1/tasks/task-result/result"
+    assert task_payload["result_metadata"]["duration_seconds"] == 1.0
+    assert task_payload["result_metadata"]["sample_rate"] == 44100
+    assert task_payload["result_metadata"]["output_url"] == "/api/v1/tasks/task-result/result"
     for header_value in response.headers.values():
         header_value.encode("latin-1")
 

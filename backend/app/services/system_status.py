@@ -170,6 +170,8 @@ def collect_sovits_check() -> dict[str, Any]:
         "source_repo": runtime_config.source_repo,
         "source_url": runtime_config.source_url,
         "license": runtime_config.license,
+        "internal_test_only": getattr(runtime_config, "internal_test_only", False),
+        "temporary_demo_reason": getattr(runtime_config, "temporary_demo_reason", ""),
         "install_report_path": runtime_config.install_report_path,
         "notes": runtime_config.notes,
         "model_path_basename": runtime_config.model_path_basename,

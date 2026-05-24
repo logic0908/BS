@@ -1,5 +1,5 @@
 {
-  "active_preset_id": "final_primary",
+  "active_preset_id": "final_male_powerful",
   "fallback_preset_id": "tech_villager",
   "presets": [
     {
@@ -47,6 +47,8 @@
       "source_repo": "Kuugo/Nova-Adult_So-Vits-SVC",
       "source_url": "https://huggingface.co/Kuugo/Nova-Adult_So-Vits-SVC",
       "license": "license_unknown",
+      "internal_test_only": true,
+      "temporary_demo_reason": "用于本地毕业设计效果对比，授权状态待确认，不作为公开演示默认模型",
       "install_report_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_youth/install_report.json",
       "notes": "v1.2 内部复核候选；已使用 speaker=Nova_Adult 完成本地真实冒烟测试，但由于 license_unknown，当前仍仅用于内部复核，is_demo_quality=false。"
     },
@@ -71,6 +73,8 @@
       "source_repo": "andreyaniv/andre-yaniv-so-vits-svc",
       "source_url": "https://huggingface.co/andreyaniv/andre-yaniv-so-vits-svc",
       "license": "license_unknown",
+      "internal_test_only": true,
+      "temporary_demo_reason": "用于本地毕业设计效果对比，授权状态待确认，不作为公开演示默认模型",
       "install_report_path": "/home/featurize/work/BS/local_models/sovits-final/final_male_powerful/install_report.json",
       "notes": "公开 Hugging Face 模型候选；授权元数据仍不明确；仅在使用 model=G_15000.pth、speaker=AY、speech_encoder=vec256l9 完成本地冒烟测试后启用。"
     },

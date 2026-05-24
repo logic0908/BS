@@ -40,8 +40,12 @@ type AudioRuntimeMetadata = {
   sampleRate?: number
 }
 
+type FetchableAudioUrlReason = 'ok' | 'empty' | 'filesystem_path'
+type ModelSelectionMode = 'auto' | 'manual'
+
 const FILE_SIZE_LIMIT = 10 * 1024 * 1024
 const DEFAULT_PRESET_ID = 'final_primary'
+const DEFAULT_MANUAL_PRESET_ID = 'final_male_powerful'
 const DEFAULT_SPEAKER = 'lain'
 const DEFAULT_FILM_STRENGTH = 0.1
 const FILM_STRENGTH_PRESETS = [0.05, 0.1, 0.15, 0.2]
@@ -58,6 +62,8 @@ function App() {
   const [filmStrength, setFilmStrength] = useState<number>(DEFAULT_FILM_STRENGTH)
 
   const [promptText, setPromptText] = useState('')
+  const [modelSelectionMode, setModelSelectionMode] = useState<ModelSelectionMode>('auto')
+  const [manualModelPresetId, setManualModelPresetId] = useState(DEFAULT_MANUAL_PRESET_ID)
 
   const [taskId, setTaskId] = useState<string | null>(null)
   const [taskStatus, setTaskStatus] = useState<string>('idle')
@@ -79,7 +85,7 @@ function App() {
   const isUploading = status === AppStatus.UPLOADING
   const isConverting = status === AppStatus.CONVERTING
 
-  const modelPresetId = useMemo(() => {
+  const activeModelPresetId = useMemo(() => {
     const fromHealth = systemHealth?.svc_model_presets?.active_preset_id?.trim()
     if (fromHealth) return fromHealth
     const fromCheck = sovitsCheck?.svc_model_presets?.active_preset_id?.trim()
@@ -87,11 +93,32 @@ function App() {
     return DEFAULT_PRESET_ID
   }, [sovitsCheck?.svc_model_presets?.active_preset_id, systemHealth?.svc_model_presets?.active_preset_id])
 
+  const availableModelPresets = useMemo(() => {
+    return systemHealth?.svc_model_presets?.presets ?? sovitsCheck?.svc_model_presets?.presets ?? []
+  }, [sovitsCheck?.svc_model_presets?.presets, systemHealth?.svc_model_presets?.presets])
+
+  const recommendedManualPresetId = useMemo(() => {
+    return resolveRecommendedManualPresetId(availableModelPresets, activeModelPresetId)
+  }, [activeModelPresetId, availableModelPresets])
+
+  const selectedManualPresetId = useMemo(() => {
+    if (availableModelPresets.some((item) => item.preset_id === manualModelPresetId)) {
+      return manualModelPresetId
+    }
+    return recommendedManualPresetId
+  }, [availableModelPresets, manualModelPresetId, recommendedManualPresetId])
+
+  const requestedModelPresetId = modelSelectionMode === 'manual' ? selectedManualPresetId : null
+
+  const selectedPreset = useMemo(() => {
+    const currentId = requestedModelPresetId ?? activeModelPresetId
+    return availableModelPresets.find((item) => item.preset_id === currentId) ?? null
+  }, [activeModelPresetId, availableModelPresets, requestedModelPresetId])
+
   const speaker = useMemo(() => {
-    const presets = systemHealth?.svc_model_presets?.presets ?? sovitsCheck?.svc_model_presets?.presets ?? []
-    const current = presets.find((item) => item.preset_id === modelPresetId)
-    return current?.speaker || DEFAULT_SPEAKER
-  }, [modelPresetId, sovitsCheck?.svc_model_presets?.presets, systemHealth?.svc_model_presets?.presets])
+    if (modelSelectionMode === 'auto') return null
+    return selectedPreset?.speaker || DEFAULT_SPEAKER
+  }, [modelSelectionMode, selectedPreset])
 
   const metadataSpeaker = result?.metadata?.speaker ?? null
   const effectiveSpeaker = metadataSpeaker || speaker || DEFAULT_SPEAKER
@@ -324,7 +351,7 @@ function App() {
         style_prompt: promptText,
         condition_mode: conditionMode,
         film_strength: filmStrength,
-        model_preset_id: modelPresetId,
+        model_preset_id: requestedModelPresetId ?? undefined,
         engine: 'sovits',
       })
 
@@ -349,7 +376,11 @@ function App() {
       const resultUrl = completed.result_url || `/api/v1/tasks/${createdTaskId}/result`
 
       const downloadResponse = await axios.get(`/api/v1/tasks/${createdTaskId}/result`, { responseType: 'blob' })
-      const outputAudioUrl = window.URL.createObjectURL(downloadResponse.data as Blob)
+      const outputAudioBlob = normalizeAudioBlob(downloadResponse.data, 'audio/wav')
+      if (outputAudioBlob.size <= 0) {
+        throw new TaskFailureError('后端结果文件为空。', `task_id=${createdTaskId}`)
+      }
+      const outputAudioUrl = window.URL.createObjectURL(outputAudioBlob)
 
       const nextResult: ProcessingResult = {
         taskId: createdTaskId,
@@ -374,7 +405,7 @@ function App() {
       setTaskProgress(100)
       setStatusMessage('转换成功，结果已生成。')
 
-      const styleRequest = buildStyleEvidenceRequest(nextResult.metadata, promptText, modelPresetId)
+      const styleRequest = buildStyleEvidenceRequest(nextResult.metadata, promptText, selectedPreset?.preset_id ?? activeModelPresetId)
       setStyleEvidenceRequest(styleRequest)
     } catch (error) {
       setStatus(AppStatus.FAILED)
@@ -392,15 +423,25 @@ function App() {
 
   const progressPercent = Math.max(0, Math.min(100, taskProgress))
   const metadata = result?.metadata ?? null
-  const inputSpectrumUrl =
-    selectedFilePreviewUrl ??
-    uploadInfo?.input_url ??
-    uploadInfo?.vocals_url ??
-    uploadInfo?.file_url ??
-    result?.inputAudioUrl ??
-    metadata?.input_url ??
-    null
-  const outputSpectrumUrl = metadata?.output_url ?? result?.outputAudioUrl ?? result?.downloadUrl ?? null
+  const inputSpectrumUrl = pickBrowserAudioUrl(
+    selectedFilePreviewUrl,
+    uploadInfo?.input_url,
+    uploadInfo?.vocals_url,
+    uploadInfo?.file_url,
+    result?.inputAudioUrl,
+    metadata?.input_url,
+  )
+  const outputSpectrumUrl = pickBrowserAudioUrl(
+    result?.outputAudioUrl,
+    result?.downloadUrl,
+    metadata?.output_url,
+    result?.resultUrl,
+  )
+  const outputAudioSourceUrl = pickBrowserAudioUrl(
+    result?.outputAudioUrl,
+    result?.downloadUrl,
+    result?.resultUrl,
+  )
   const displayDurationSeconds = pickPositiveNumber(
     metadata?.duration_seconds,
     result?.duration_seconds,
@@ -424,8 +465,18 @@ function App() {
   }, [])
   const convertButtonLabel = getConvertButtonLabel({ inputAudio, vocalsId, promptText, isConverting })
   const resultFileName = basenamePath(metadata?.final_output_path ?? `${result?.taskId || 'result'}.wav`)
+  const internalTestPresetWarning =
+    selectedPreset?.internal_test_only
+      ? selectedPreset.temporary_demo_reason || '当前模型仅用于本地测试，不用于公开发布。'
+      : null
+
+  const resultInternalTestWarning =
+    metadata?.internal_test_only
+      ? metadata.temporary_demo_reason || '本次结果使用了内部测试模型，仅用于本地测试，不用于公开发布。'
+      : null
+
   const malePromptMismatchWarning =
-    promptText.includes('男声') && effectiveSpeaker === 'lain'
+    promptText.includes('男声') && metadata?.speaker === 'lain'
       ? '当前提示词包含“男声”方向，但当前目标音色仍为“lain”。文本提示词只影响风格调制，不会自动切换目标音色；若需真正男声输出，需要接入男声模型预设或男声目标音色。'
       : null
 
@@ -514,6 +565,54 @@ function App() {
                 ))}
               </div>
 
+              <div className="field-label">模型选择</div>
+              <div className="chip-row" role="radiogroup" aria-label="模型选择模式">
+                <button
+                  type="button"
+                  className="chip-button"
+                  aria-pressed={modelSelectionMode === 'auto'}
+                  onClick={() => setModelSelectionMode('auto')}
+                  disabled={isConverting}
+                >
+                  自动按提示词选择模型
+                </button>
+                <button
+                  type="button"
+                  className="chip-button"
+                  aria-pressed={modelSelectionMode === 'manual'}
+                  onClick={() => setModelSelectionMode('manual')}
+                  disabled={isConverting}
+                >
+                  手动选择模型
+                </button>
+              </div>
+              <div className="char-count">
+                {modelSelectionMode === 'auto'
+                  ? '自动模式不会强制传 final_primary，后端会根据提示词命中 male_powerful / male_youth 等风格。'
+                  : '手动模式会显式传 model_preset_id；演示对比时优先预置 final_male_powerful。'}
+              </div>
+
+              {modelSelectionMode === 'manual' ? (
+                <>
+                  <label htmlFor="manual-model-preset" className="field-label">手动模型预设</label>
+                  <select
+                    id="manual-model-preset"
+                    className="styled-textarea"
+                    value={selectedManualPresetId}
+                    onChange={(event) => setManualModelPresetId(event.target.value)}
+                    disabled={isConverting}
+                  >
+                    {availableModelPresets.map((preset) => (
+                      <option key={preset.preset_id} value={preset.preset_id}>
+                        {buildPresetOptionLabel(preset)}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : null}
+
+              {internalTestPresetWarning ? <div className="inline-warning" role="alert">{internalTestPresetWarning}</div> : null}
+
               <label htmlFor="film-strength-slider" className="field-label">
                 注入强度（{filmStrength.toFixed(2)}）
               </label>
@@ -545,8 +644,8 @@ function App() {
               <div className="compact-meta-grid" data-testid="task-main-fields">
                 <MiniMeta label={labelOf('condition_mode')} value={valueLabelOf(conditionMode)} />
                 <MiniMeta label={labelOf('film_strength')} value={formatFilmStrength(filmStrength)} />
-                <MiniMeta label={labelOf('model_preset_id')} value={valueLabelOf(modelPresetId)} />
-                <MiniMeta label={labelOf('speaker')} value={valueLabelOf(speaker)} />
+                <MiniMeta label={labelOf('model_preset_id')} value={valueLabelOf(requestedModelPresetId ?? '自动按提示词选择')} />
+                <MiniMeta label={labelOf('speaker')} value={valueLabelOf(speaker ?? '按命中结果决定')} />
               </div>
 
               <button type="button" className="primary-button" onClick={handleConvert} disabled={!canConvert}>
@@ -598,9 +697,10 @@ function App() {
               {status === AppStatus.SUCCEEDED && result && (
                 <div className="success-box">
                   <strong>转换成功</strong>
+                  {resultInternalTestWarning ? <div className="inline-warning" role="alert">{resultInternalTestWarning}</div> : null}
                   <audio
                     controls
-                    src={result.outputAudioUrl}
+                    src={outputAudioSourceUrl ?? undefined}
                     className="result-audio"
                     onLoadedMetadata={(event) => {
                       const duration = event.currentTarget.duration
@@ -612,7 +712,7 @@ function App() {
                       }
                     }}
                   />
-                  <a href={result.downloadUrl} download={`converted_${result.taskId}.wav`} className="download-button">下载结果</a>
+                  <a href={outputAudioSourceUrl ?? result.resultUrl} download={`converted_${result.taskId}.wav`} className="download-button">下载结果</a>
 
                   <div className="compact-meta-grid" data-testid="result-main-fields">
                     <PathMiniMeta label={labelOf('result_url')} value={valueOrFallback(result.resultUrl, '未返回')} />
@@ -655,7 +755,10 @@ function App() {
                   label={labelOf('adapter_checkpoint')}
                   value={compactCheckpoint(metadata?.adapter_checkpoint ?? metadata?.adapter_checkpoint_path)}
                 />
-                <MiniMeta label={labelOf('model_preset')} value={valueLabelOf(metadata?.effective_model_preset_id ?? metadata?.model_preset_id ?? modelPresetId)} />
+                <MiniMeta
+                  label={labelOf('model_preset')}
+                  value={valueLabelOf(metadata?.effective_model_preset_id ?? metadata?.model_preset_id ?? requestedModelPresetId ?? activeModelPresetId)}
+                />
                 <MiniMeta label={labelOf('speaker')} value={valueLabelOf(effectiveSpeaker)} />
               </div>
 
@@ -664,8 +767,8 @@ function App() {
               <details className="terms-details" data-testid="terms-details">
                 <summary>字段说明</summary>
                 <div className="terms-content">
-                  <p><strong>模型预设（model_preset / final_primary）</strong> 当前系统选择的模型配置方案，决定使用哪组模型权重和默认目标音色。</p>
-                  <p><strong>目标音色（speaker / lain）</strong> 目标音色决定输出主音色。提示词中的“男声”不会自动切换目标音色。</p>
+                  <p><strong>模型预设（model_preset）</strong> 当前系统选择的模型配置方案，决定使用哪组模型权重和默认目标音色。</p>
+                  <p><strong>目标音色（speaker）</strong> 目标音色决定输出主音色。提示词中的“男声”不会自动切换目标音色。</p>
                   <p><strong>音频时长（duration_seconds）</strong> 音频持续时间，单位为秒。</p>
                   <p><strong>采样率（sample_rate）</strong> 音频每秒采样点数量，单位为 Hz。</p>
                   <p><strong>结果接口（result_url）</strong> 后端返回转换结果信息的接口地址。</p>
@@ -827,6 +930,12 @@ function normalizeResultMetadata(taskData: TaskResponse): ResultMetadata {
     model_preset_id: readString(raw.model_preset_id),
     requested_model_preset_id: readString(raw.requested_model_preset_id),
     effective_model_preset_id: readString(raw.effective_model_preset_id),
+    model_display_name: readString(raw.model_display_name),
+    source_url: readString(raw.source_url),
+    license: readString(raw.license),
+    is_demo_quality: readBoolean(raw.is_demo_quality),
+    internal_test_only: readBoolean(raw.internal_test_only),
+    temporary_demo_reason: readString(raw.temporary_demo_reason),
     speaker: readString(raw.speaker),
     input_audio_path: readString(raw.input_audio_path),
     input_vocals_path: readString(raw.input_vocals_path),
@@ -836,7 +945,72 @@ function normalizeResultMetadata(taskData: TaskResponse): ResultMetadata {
   }
 }
 
-function buildStyleEvidenceRequest(metadata: ResultMetadata, promptText: string, modelPresetId: string): StyleEvidenceRequest | null {
+function normalizeAudioBlob(payload: unknown, fallbackMimeType: string): Blob {
+  if (payload instanceof Blob) {
+    if (payload.type) return payload
+    return new Blob([payload], { type: fallbackMimeType })
+  }
+  if (payload instanceof ArrayBuffer) {
+    return new Blob([payload], { type: fallbackMimeType })
+  }
+  if (ArrayBuffer.isView(payload)) {
+    const view = payload as ArrayBufferView<ArrayBuffer>
+    const buffer = view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength)
+    return new Blob([buffer], { type: fallbackMimeType })
+  }
+  throw new TaskFailureError('后端结果文件不是有效音频。', `received_type=${typeof payload}`)
+}
+
+function pickBrowserAudioUrl(...candidates: Array<string | null | undefined>): string | null {
+  for (const candidate of candidates) {
+    const normalized = normalizeBrowserAudioUrl(candidate)
+    if (normalized) return normalized
+  }
+  return null
+}
+
+function normalizeBrowserAudioUrl(url: string | null | undefined): string | null {
+  const normalized = readString(url)
+  if (!normalized) return null
+  const reason = getFetchableAudioUrlReason(normalized)
+  if (reason !== 'ok') {
+    console.warn('[App] 忽略不可用于浏览器音频请求的地址', {
+      url: normalized,
+      reason,
+    })
+    return null
+  }
+  return normalized
+}
+
+function getFetchableAudioUrlReason(url: string): FetchableAudioUrlReason {
+  const normalized = url.trim()
+  if (!normalized) return 'empty'
+  if (
+    normalized.startsWith('blob:') ||
+    normalized.startsWith('data:') ||
+    normalized.startsWith('http://') ||
+    normalized.startsWith('https://') ||
+    normalized.startsWith('/api/') ||
+    normalized.startsWith('/files/') ||
+    normalized.startsWith('/uploads/')
+  ) {
+    return 'ok'
+  }
+  if (
+    normalized.startsWith('file://') ||
+    /^[a-zA-Z]:[\\/]/.test(normalized) ||
+    /^\/(home|tmp|var|mnt|Users|private)\//.test(normalized)
+  ) {
+    return 'filesystem_path'
+  }
+  if (normalized.startsWith('/')) {
+    return 'filesystem_path'
+  }
+  return 'ok'
+}
+
+function buildStyleEvidenceRequest(metadata: ResultMetadata, promptText: string, fallbackModelPresetId: string): StyleEvidenceRequest | null {
   const normalizedPrompt = promptText.trim()
   const inputPath = metadata.input_vocals_path ?? metadata.input_audio_path
   const outputPath = metadata.final_output_path
@@ -847,8 +1021,31 @@ function buildStyleEvidenceRequest(metadata: ResultMetadata, promptText: string,
     inputPath,
     outputPath,
     promptText: normalizedPrompt,
-    modelPresetId: metadata.effective_model_preset_id ?? metadata.model_preset_id ?? modelPresetId,
+    modelPresetId: metadata.effective_model_preset_id ?? metadata.model_preset_id ?? fallbackModelPresetId,
   }
+}
+
+function resolveRecommendedManualPresetId(
+  presets: Array<{ preset_id: string; ready?: boolean }>,
+  activePresetId: string,
+): string {
+  const preferred = presets.find((item) => item.preset_id === DEFAULT_MANUAL_PRESET_ID && item.ready !== false)
+  if (preferred) return preferred.preset_id
+  const active = presets.find((item) => item.preset_id === activePresetId)
+  if (active) return active.preset_id
+  return activePresetId || DEFAULT_PRESET_ID
+}
+
+function buildPresetOptionLabel(preset: {
+  preset_id: string
+  display_name: string
+  speaker: string
+  ready?: boolean
+  internal_test_only?: boolean
+}): string {
+  const status = preset.ready === false ? '未就绪' : '可用'
+  const scope = preset.internal_test_only ? '内部测试' : '公开链路'
+  return `${preset.display_name} (${preset.preset_id} / ${preset.speaker || 'unknown'} / ${status} / ${scope})`
 }
 
 function getConvertButtonLabel(args: {

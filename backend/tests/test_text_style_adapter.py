@@ -114,6 +114,53 @@ def test_text_style_adapter_loads_trained_checkpoint(tmp_path, monkeypatch):
     assert result.control_params["style_strength"] == pytest.approx(0.725, abs=1e-4)
 
 
+def test_trained_text_style_adapter_keeps_dedicated_style_library_preset(tmp_path, monkeypatch):
+    checkpoint_path = tmp_path / "adapter.pt"
+    model = AdapterMLP(input_dim=384, output_dim=6, hidden_dims=[8])
+    for param in model.parameters():
+        param.data.zero_()
+    torch.save(
+        {
+            "adapter_version": "v0.7_trained_mlp_with_rule_based_fallback",
+            "input_dim": 384,
+            "output_dim": 6,
+            "hidden_dims": [8],
+            "target_keys": ["brightness", "power", "breathiness", "youthfulness", "transpose", "style_strength"],
+            "model_state_dict": model.state_dict(),
+            "sample_embeddings": [[1.0 / (384 ** 0.5)] * 384],
+            "sample_records": [
+                {
+                    "id": "sample_trained",
+                    "model_preset_id": "final_primary",
+                    "gender_hint": "neutral",
+                }
+            ],
+        },
+        checkpoint_path,
+    )
+    monkeypatch.setenv("STYLE_ADAPTER_USE_TRAINED", "true")
+    monkeypatch.setenv("STYLE_ADAPTER_CHECKPOINT_PATH", str(checkpoint_path))
+
+    result = text_style_adapter.build_controls(
+        prompt_embedding={
+            "embedding": [1.0 / (384 ** 0.5)] * 384,
+            "keywords": ["低沉", "磁性", "叙事感"],
+            "embedding_norm": 1.0,
+        },
+        style_strength=0.65,
+        selected_style={
+            "model_preset_id": "final_male_powerful",
+            "transpose": 0,
+            "current_style_has_dedicated_model": True,
+            "model_preset_ready": True,
+        },
+        available_model_presets=[{"preset_id": "final_primary"}, {"preset_id": "final_male_powerful"}],
+    )
+
+    assert result.adapter_mode == "trained"
+    assert result.control_params["model_preset_id"] == "final_male_powerful"
+
+
 def test_text_style_adapter_falls_back_when_checkpoint_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("STYLE_ADAPTER_USE_TRAINED", "true")
     monkeypatch.setenv("STYLE_ADAPTER_CHECKPOINT_PATH", str(tmp_path / "missing.pt"))

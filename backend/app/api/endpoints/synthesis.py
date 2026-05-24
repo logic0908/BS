@@ -201,6 +201,10 @@ def _enhanced_error_detail(
 def _normalize_svc_task_payload(task_id: str, task) -> dict:
     result_url = f"/api/v1/tasks/{task_id}/result" if task.status == "succeeded" else None
     result_metadata = dict(task.engine_details or {})
+    if result_url:
+        result_metadata.setdefault("result_url", result_url)
+        result_metadata.setdefault("download_url", result_url)
+        result_metadata.setdefault("output_url", result_url)
     if task.output_path:
         result_metadata.setdefault("final_output_path", task.output_path)
     return {
@@ -212,6 +216,8 @@ def _normalize_svc_task_payload(task_id: str, task) -> dict:
         "message": task.message,
         "selected_style": task.selected_style,
         "result_url": result_url,
+        "download_url": result_metadata.get("download_url"),
+        "output_url": result_metadata.get("output_url"),
         "error": task.error,
         "inference_mode": task.inference_mode,
         "engine_details": task.engine_details,
@@ -220,6 +226,8 @@ def _normalize_svc_task_payload(task_id: str, task) -> dict:
         "text_encoding": getattr(task, "text_encoding", None),
         "adapter_result": getattr(task, "adapter_result", None),
         "audio_quality": getattr(task, "audio_quality", None),
+        "duration_seconds": result_metadata.get("duration_seconds"),
+        "sample_rate": result_metadata.get("sample_rate"),
         "mock_enabled": result_metadata.get("mock_enabled"),
         "model_path": result_metadata.get("model_path"),
         "config_path": result_metadata.get("config_path"),
@@ -233,6 +241,8 @@ def _normalize_svc_task_payload(task_id: str, task) -> dict:
         "source_repo": result_metadata.get("source_repo"),
         "source_url": result_metadata.get("source_url"),
         "license": result_metadata.get("license"),
+        "internal_test_only": result_metadata.get("internal_test_only"),
+        "temporary_demo_reason": result_metadata.get("temporary_demo_reason"),
         "install_report_path": result_metadata.get("install_report_path"),
         "notes": result_metadata.get("notes"),
         "model_path_basename": result_metadata.get("model_path_basename"),

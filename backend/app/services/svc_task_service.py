@@ -12,7 +12,7 @@ from typing import Any
 from app.models_svc.sovits_wrapper import SoVitsSvcEngine
 from app.models_svc.text_style_adapter import normalize_requested_adapter_mode, text_style_adapter
 from app.services import style_library
-from app.services.audio_quality import analyze_audio_pair, write_audio_quality_report
+from app.services.audio_quality import analyze_audio_file, analyze_audio_pair, write_audio_quality_report
 from app.services.input_quality import (
     analyze_input_audio,
     build_input_quality_fallback,
@@ -41,6 +41,19 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _project_relative_path(path: str | None) -> str | None:
+    normalized = str(path or "").strip()
+    if not normalized:
+        return None
+    try:
+        rel_path = os.path.relpath(normalized, PROJECT_ROOT)
+    except ValueError:
+        return normalized
+    if rel_path.startswith(".."):
+        return normalized
+    return rel_path.replace("\\", "/")
 
 
 @dataclass
@@ -398,9 +411,15 @@ class SvcTaskService:
             audio_quality_report = analyze_audio_pair(upload.vocals_path, output)
             audio_quality_report["report_path"] = write_audio_quality_report(debug_dir, audio_quality_report)
             audio_quality_summary = audio_quality_report.get("summary")
+            output_audio_metrics = analyze_audio_file(output)
             task.audio_quality = audio_quality_summary
+            adapter_checkpoint_path = _project_relative_path((adapter_summary or {}).get("adapter_checkpoint_path"))
+            style_embedding_pt_path = _project_relative_path((style_embedding_paths or {}).get("style_embedding_pt"))
+            style_embedding_json_path = _project_relative_path((style_embedding_paths or {}).get("style_embedding_json"))
+            style_embedding_npy_path = _project_relative_path((style_embedding_paths or {}).get("style_embedding_npy"))
 
             engine_details = dict(runtime_context.get("runtime_config") or {})
+            result_endpoint = f"/api/v1/tasks/{task_id}/result"
             engine_details.update(
                 {
                     "task_backend_mode": task.task_backend_mode,
@@ -411,9 +430,9 @@ class SvcTaskService:
                     "embedding_norm": (text_encoding_summary or {}).get("embedding_norm"),
                     "top_keywords": (text_encoding_summary or {}).get("top_keywords", []),
                     "style_prompt": resolved_style_prompt,
-                    "style_emb_path": (style_embedding_paths or {}).get("style_embedding_pt"),
-                    "style_embedding_json": (style_embedding_paths or {}).get("style_embedding_json"),
-                    "style_embedding_npy": (style_embedding_paths or {}).get("style_embedding_npy"),
+                    "style_emb_path": style_embedding_pt_path,
+                    "style_embedding_json": style_embedding_json_path,
+                    "style_embedding_npy": style_embedding_npy_path,
                     "text_encoding_status": (text_encoding_summary or {}).get("status"),
                     "text_encoding_enabled": bool((text_encoding_summary or {}).get("enabled")),
                     "encoder_type": (text_encoding_summary or {}).get("encoder_type"),
@@ -421,7 +440,7 @@ class SvcTaskService:
                     "adapter_mode": (adapter_summary or {}).get("adapter_mode"),
                     "adapter_version": (adapter_summary or {}).get("adapter_version"),
                     "adapter_type": (adapter_summary or {}).get("adapter_type"),
-                    "adapter_checkpoint_path": (adapter_summary or {}).get("adapter_checkpoint_path"),
+                    "adapter_checkpoint_path": adapter_checkpoint_path,
                     "control_params_summary": (adapter_summary or {}).get("control_params"),
                     "adapter_override_reason": (adapter_summary or {}).get("override_reason"),
                     "adapter_fallback_reason": (adapter_summary or {}).get("adapter_fallback_reason"),
@@ -432,6 +451,12 @@ class SvcTaskService:
                     "input_quality_report_path": upload.input_quality_report_path,
                     "input_audio_path": upload.input_path,
                     "input_vocals_path": upload.vocals_path,
+                    "duration_seconds": output_audio_metrics.get("duration_seconds"),
+                    "sample_rate": output_audio_metrics.get("sample_rate"),
+                    "has_nan_or_inf": output_audio_metrics.get("has_nan_or_inf"),
+                    "result_url": result_endpoint,
+                    "download_url": result_endpoint,
+                    "output_url": result_endpoint,
                     "effective_style_strength": round(effective_style_strength, 4),
                     "f0_method": (conversion_params_summary or {}).get("f0_method"),
                     "f0_fallback_reason": (conversion_params_summary or {}).get("f0_fallback_reason"),
@@ -491,6 +516,9 @@ class SvcTaskService:
                 }
             )
             if text_encoding_summary:
+                style_embedding_pt_path = _project_relative_path((style_embedding_paths or {}).get("style_embedding_pt"))
+                style_embedding_json_path = _project_relative_path((style_embedding_paths or {}).get("style_embedding_json"))
+                style_embedding_npy_path = _project_relative_path((style_embedding_paths or {}).get("style_embedding_npy"))
                 base_details.update(
                     {
                         "encoder_model_name": text_encoding_summary.get("encoder_model_name"),
@@ -498,22 +526,23 @@ class SvcTaskService:
                         "embedding_norm": text_encoding_summary.get("embedding_norm"),
                         "top_keywords": text_encoding_summary.get("top_keywords", []),
                         "style_prompt": resolved_style_prompt,
-                        "style_emb_path": (style_embedding_paths or {}).get("style_embedding_pt"),
-                        "style_embedding_json": (style_embedding_paths or {}).get("style_embedding_json"),
-                        "style_embedding_npy": (style_embedding_paths or {}).get("style_embedding_npy"),
+                        "style_emb_path": style_embedding_pt_path,
+                        "style_embedding_json": style_embedding_json_path,
+                        "style_embedding_npy": style_embedding_npy_path,
                         "text_encoding_status": text_encoding_summary.get("status"),
                         "text_encoding_enabled": bool(text_encoding_summary.get("enabled")),
                         "encoder_type": text_encoding_summary.get("encoder_type"),
                     }
                 )
             if adapter_summary:
+                adapter_checkpoint_path = _project_relative_path(adapter_summary.get("adapter_checkpoint_path"))
                 base_details.update(
                     {
                         "adapter_enabled": bool(adapter_summary.get("adapter_enabled")),
                         "adapter_mode": adapter_summary.get("adapter_mode"),
                         "adapter_version": adapter_summary.get("adapter_version"),
                         "adapter_type": adapter_summary.get("adapter_type"),
-                        "adapter_checkpoint_path": adapter_summary.get("adapter_checkpoint_path"),
+                        "adapter_checkpoint_path": adapter_checkpoint_path,
                         "control_params_summary": adapter_summary.get("control_params"),
                         "adapter_override_reason": adapter_summary.get("override_reason"),
                         "adapter_fallback_reason": adapter_summary.get("adapter_fallback_reason"),

@@ -181,7 +181,7 @@ function SpectrumCard({
       {status === 'loading' && <p className="spectrum-text">频谱生成中...</p>}
       {status === 'error' && (
         <p className="spectrum-text spectrum-warning" title={errorReason ? `原因：${errorReason}` : undefined}>
-          {label}频谱生成失败
+          {errorReason ? `${label}频谱生成失败：${errorReason}` : `${label}频谱生成失败`}
         </p>
       )}
       {status === 'ready' && <canvas ref={canvasRef} className="spectrum-canvas" aria-label={`${label}频谱图`} />}

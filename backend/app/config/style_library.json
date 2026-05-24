@@ -11,8 +11,8 @@
   {
     "style_id": "male_powerful",
     "style_label": "力量感男声",
-    "description": "厚重、力量感、成熟男声",
-    "keywords": ["厚重", "低沉", "成熟", "力量", "摇滚", "爆发", "powerful", "thick", "deep", "male"],
+    "description": "厚重、磁性、力量感、成熟男声",
+    "keywords": ["厚重", "低沉", "磁性", "成熟", "力量", "男声", "叙事", "叙事感", "摇滚", "爆发", "powerful", "thick", "deep", "male"],
     "model_preset_id": "final_male_powerful",
     "style_tags": ["male", "powerful", "thick"],
     "transpose": 0

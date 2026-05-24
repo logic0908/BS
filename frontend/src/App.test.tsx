@@ -31,7 +31,25 @@ const defaultHealth = {
     mock_mode: false,
     svc_model_presets: {
       active_preset_id: 'final_primary',
-      presets: [{ preset_id: 'final_primary', ready: true, display_name: 'Default', speaker: 'lain' }],
+      presets: [
+        { preset_id: 'final_primary', ready: true, display_name: 'Default', speaker: 'lain', internal_test_only: false },
+        {
+          preset_id: 'final_male_powerful',
+          ready: true,
+          display_name: 'Powerful Male',
+          speaker: 'AY',
+          internal_test_only: true,
+          temporary_demo_reason: '用于本地毕业设计效果对比，授权状态待确认，不作为公开演示默认模型',
+        },
+        {
+          preset_id: 'final_male_youth',
+          ready: true,
+          display_name: 'Youth Male',
+          speaker: 'Nova_Adult',
+          internal_test_only: true,
+          temporary_demo_reason: '用于本地毕业设计效果对比，授权状态待确认，不作为公开演示默认模型',
+        },
+      ],
     },
     sovits: {
       condition_mode: 'internal_film',
@@ -141,6 +159,7 @@ function successTaskData(overrides?: Record<string, unknown>) {
       adapter_checkpoint: '/home/featurize/work/BS/runtime/style_adapter/text_style_adapter_1000.pt',
       model_preset_id: 'final_primary',
       effective_model_preset_id: 'final_primary',
+      internal_test_only: false,
       speaker: 'lain',
       duration_seconds: 12.3,
       sample_rate: 44100,
@@ -368,6 +387,103 @@ describe('App compact localized dashboard', () => {
     expect((convertCall?.[1] as Record<string, unknown>)?.film_strength).toBe(0.35)
   })
 
+  it('默认自动模式不会强制传 final_primary，而是让后端按提示词选模型', async () => {
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url === '/api/v1/upload') return uploadOk
+      if (url === '/api/v1/convert') return { data: { task_id: 'task-1' } }
+      if (url === '/api/v1/style-analysis/compare') return { data: styleEvidenceResponse() }
+      throw new Error(`Unexpected POST ${url}`)
+    })
+
+    mockedAxios.get.mockImplementation(async (url: string) => {
+      if (url === '/api/v1/system/health') return defaultHealth
+      if (url === '/api/v1/system/sovits-check') return defaultCheck
+      if (url === '/api/v1/tasks/task-1') {
+        return {
+          data: successTaskData({
+            model_preset_id: 'final_male_powerful',
+            effective_model_preset_id: 'final_male_powerful',
+            speaker: 'AY',
+          }),
+        }
+      }
+      if (url === '/api/v1/tasks/task-1/result') return { data: new Blob(['wav']) }
+      throw new Error(`Unexpected GET ${url}`)
+    })
+
+    await renderApp()
+    await selectAndUpload()
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('风格提示词'), { target: { value: '低沉磁性叙事感' } })
+      await flush()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '开始风格转换' }))
+      await flush()
+    })
+
+    await waitFor(() => expect(screen.getByText('转换成功')).toBeInTheDocument())
+    const convertCall = mockedAxios.post.mock.calls.find((call) => call[0] === '/api/v1/convert')
+    expect(convertCall).toBeTruthy()
+    expect((convertCall?.[1] as Record<string, unknown>)?.model_preset_id).toBeUndefined()
+    expect(screen.getByTestId('tech-main-fields').textContent ?? '').toContain('模型预设final_male_powerful')
+  })
+
+  it('手动模式会显式传所选模型，并提示内部测试模型边界', async () => {
+    mockedAxios.post.mockImplementation(async (url: string) => {
+      if (url === '/api/v1/upload') return uploadOk
+      if (url === '/api/v1/convert') return { data: { task_id: 'task-1' } }
+      if (url === '/api/v1/style-analysis/compare') return { data: styleEvidenceResponse() }
+      throw new Error(`Unexpected POST ${url}`)
+    })
+
+    mockedAxios.get.mockImplementation(async (url: string) => {
+      if (url === '/api/v1/system/health') return defaultHealth
+      if (url === '/api/v1/system/sovits-check') return defaultCheck
+      if (url === '/api/v1/tasks/task-1') {
+        return {
+          data: successTaskData({
+            model_preset_id: 'final_male_powerful',
+            effective_model_preset_id: 'final_male_powerful',
+            internal_test_only: true,
+            temporary_demo_reason: '用于本地毕业设计效果对比，授权状态待确认，不作为公开演示默认模型',
+            speaker: 'AY',
+          }),
+        }
+      }
+      if (url === '/api/v1/tasks/task-1/result') return { data: new Blob(['wav']) }
+      throw new Error(`Unexpected GET ${url}`)
+    })
+
+    await renderApp()
+    await selectAndUpload()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '手动选择模型' }))
+      await flush()
+    })
+
+    const modelSelect = screen.getByLabelText('手动模型预设') as HTMLSelectElement
+    expect(modelSelect.value).toBe('final_male_powerful')
+    expect(screen.getByText('用于本地毕业设计效果对比，授权状态待确认，不作为公开演示默认模型')).toBeInTheDocument()
+
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText('风格提示词'), { target: { value: '低沉磁性叙事感' } })
+      await flush()
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '开始风格转换' }))
+      await flush()
+    })
+
+    await waitFor(() => expect(screen.getByText('转换成功')).toBeInTheDocument())
+    const convertCall = mockedAxios.post.mock.calls.find((call) => call[0] === '/api/v1/convert')
+    expect(convertCall).toBeTruthy()
+    expect((convertCall?.[1] as Record<string, unknown>)?.model_preset_id).toBe('final_male_powerful')
+    expect(screen.getAllByText('用于本地毕业设计效果对比，授权状态待确认，不作为公开演示默认模型').length).toBeGreaterThan(0)
+  })
+
   it('选择上传文件后优先使用本地 blob URL 生成上传频谱', async () => {
     const createObjectURL = globalThis.URL.createObjectURL as unknown as ReturnType<typeof vi.fn>
     createObjectURL.mockReset()
@@ -396,10 +512,38 @@ describe('App compact localized dashboard', () => {
     expect(screen.getByText('上传音频暂不可预览')).toBeInTheDocument()
   })
 
-  it('缺少 outputUrl 时显示“转换后音频暂不可预览”', async () => {
-    await runSuccessFlow('清亮风格', { output_url: '' })
+  it('缺少 output blob URL 时回退到 result_url 生成输出频谱', async () => {
+    const createObjectURL = globalThis.URL.createObjectURL as unknown as ReturnType<typeof vi.fn>
+    createObjectURL.mockReset()
+    createObjectURL
+      .mockImplementationOnce(() => 'blob:local-input-preview')
+      .mockImplementationOnce(() => '')
 
-    expect(screen.getByText('转换后音频暂不可预览')).toBeInTheDocument()
+    await runSuccessFlow('清亮风格')
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled()
+    })
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]))
+    expect(calledUrls).toContain('/api/v1/tasks/task-1/result')
+  })
+
+  it('metadata.output_url 指向服务器本地路径时，输出频谱仍优先使用已下载 blob URL', async () => {
+    const createObjectURL = globalThis.URL.createObjectURL as unknown as ReturnType<typeof vi.fn>
+    createObjectURL.mockReset()
+    createObjectURL
+      .mockImplementationOnce(() => 'blob:local-input-preview')
+      .mockImplementationOnce(() => 'blob:converted-output')
+
+    await runSuccessFlow('清亮风格', { output_url: '/tmp/runtime/converted.wav' })
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled()
+    })
+
+    const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]))
+    expect(calledUrls).toContain('blob:converted-output')
+    expect(calledUrls).not.toContain('/tmp/runtime/converted.wav')
   })
 
   it('metadata duration/sample_rate 为 0 且无运行时元数据时显示未返回', async () => {
@@ -484,7 +628,32 @@ describe('App compact localized dashboard', () => {
     await runSuccessFlow('清亮风格')
 
     await waitFor(() => {
-      expect(screen.getByText('上传音频频谱生成失败')).toBeInTheDocument()
+      expect(screen.getByText('上传音频频谱生成失败：返回内容不是音频')).toBeInTheDocument()
+    })
+  })
+
+  it('output 频谱请求返回非音频时显示具体失败原因', async () => {
+    fetchMock.mockReset()
+    fetchMock
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        headers: {
+          get: (key: string) => (key.toLowerCase() === 'content-type' ? 'audio/wav' : null),
+        },
+        arrayBuffer: async () => new ArrayBuffer(16),
+      }))
+      .mockImplementationOnce(async () => ({
+        ok: true,
+        headers: {
+          get: (key: string) => (key.toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null),
+        },
+        arrayBuffer: async () => new ArrayBuffer(16),
+      }))
+
+    await runSuccessFlow('清亮风格')
+
+    await waitFor(() => {
+      expect(screen.getByText('转换后音频频谱生成失败：返回内容不是音频')).toBeInTheDocument()
     })
   })
 
@@ -534,8 +703,8 @@ describe('App compact localized dashboard', () => {
     })
 
     expect(termsDetails.open).toBe(true)
-    expect(screen.getByText('模型预设（model_preset / final_primary）')).toBeInTheDocument()
-    expect(screen.getByText('目标音色（speaker / lain）')).toBeInTheDocument()
+    expect(screen.getByText('模型预设（model_preset）')).toBeInTheDocument()
+    expect(screen.getByText('目标音色（speaker）')).toBeInTheDocument()
     expect(screen.getByText('音频时长（duration_seconds）')).toBeInTheDocument()
     expect(screen.getByText('内部 FiLM 注入（internal_film）')).toBeInTheDocument()
     expect(screen.getByText('已加载训练适配器（text_style_adapter_loaded）')).toBeInTheDocument()

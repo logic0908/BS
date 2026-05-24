@@ -90,6 +90,12 @@ export interface ResultMetadata {
   model_preset_id?: string | null
   requested_model_preset_id?: string | null
   effective_model_preset_id?: string | null
+  model_display_name?: string | null
+  source_url?: string | null
+  license?: string | null
+  is_demo_quality?: boolean | null
+  internal_test_only?: boolean | null
+  temporary_demo_reason?: string | null
   speaker?: string | null
   input_audio_path?: string | null
   input_vocals_path?: string | null
@@ -108,6 +114,8 @@ export interface TaskResponse {
   download_url?: string | null
   input_url?: string | null
   output_url?: string | null
+  duration_seconds?: number | null
+  sample_rate?: number | null
   warning?: string | null
   error?: TaskError | string | null
   result_metadata?: Record<string, unknown> | null
@@ -131,6 +139,14 @@ export interface ModelPresetStatus {
   display_name: string
   ready: boolean
   speaker: string
+  license?: string
+  source_url?: string
+  is_demo_quality?: boolean
+  smoke_test_passed?: boolean
+  is_technical_validation_only?: boolean
+  internal_test_only?: boolean
+  temporary_demo_reason?: string
+  notes?: string
 }
 
 export interface ModelPresetCollection {

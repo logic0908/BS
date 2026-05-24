@@ -91,6 +91,12 @@ def apply_runtime_defaults(preset: dict[str, Any], model_preset_id: str | None =
         resolved["device"] = model_metadata.get("device") or resolved.get("device")
         resolved["source_repo"] = model_metadata.get("source_repo") or resolved.get("source_repo") or ""
         resolved["license"] = model_metadata.get("license") or resolved.get("license") or ""
+        resolved["internal_test_only"] = bool(
+            model_metadata.get("internal_test_only", resolved.get("internal_test_only", False))
+        )
+        resolved["temporary_demo_reason"] = str(
+            model_metadata.get("temporary_demo_reason") or resolved.get("temporary_demo_reason") or ""
+        )
         resolved["model_path_basename"] = model_metadata.get("model_path_basename") or resolved.get("model_path_basename") or ""
         resolved["config_path_basename"] = model_metadata.get("config_path_basename") or resolved.get("config_path_basename") or ""
     else:
@@ -104,6 +110,12 @@ def apply_runtime_defaults(preset: dict[str, Any], model_preset_id: str | None =
         resolved["device"] = resolved.get("device") or model_metadata.get("device")
         resolved["source_repo"] = resolved.get("source_repo") or model_metadata.get("source_repo", "")
         resolved["license"] = resolved.get("license") or model_metadata.get("license", "")
+        resolved["internal_test_only"] = bool(
+            resolved.get("internal_test_only", model_metadata.get("internal_test_only", False))
+        )
+        resolved["temporary_demo_reason"] = str(
+            resolved.get("temporary_demo_reason") or model_metadata.get("temporary_demo_reason", "")
+        )
         resolved["model_path_basename"] = resolved.get("model_path_basename") or model_metadata.get("model_path_basename", "")
         resolved["config_path_basename"] = resolved.get("config_path_basename") or model_metadata.get("config_path_basename", "")
     resolved["style_tags"] = list(resolved.get("style_tags") or model_metadata.get("style_tags") or [])

@@ -34,6 +34,8 @@ class SvcModelPreset:
     source_repo: str = ""
     source_url: str = ""
     license: str = ""
+    internal_test_only: bool = False
+    temporary_demo_reason: str = ""
     install_report_path: str = ""
     notes: str = ""
     transpose: int = 0
@@ -60,6 +62,8 @@ class SvcModelPreset:
             "source_repo": self.source_repo,
             "source_url": self.source_url,
             "license": self.license,
+            "internal_test_only": self.internal_test_only,
+            "temporary_demo_reason": self.temporary_demo_reason,
             "install_report_path": self.install_report_path,
             "notes": self.notes,
             "model_path_basename": self.model_path_basename,
@@ -85,6 +89,8 @@ class SvcModelPreset:
             "source_repo": self.source_repo,
             "source_url": self.source_url,
             "license": self.license,
+            "internal_test_only": self.internal_test_only,
+            "temporary_demo_reason": self.temporary_demo_reason,
             "is_configured": self.is_configured,
             "is_demo_quality": self.is_demo_quality,
             "smoke_test_passed": self.smoke_test_passed,
@@ -133,6 +139,8 @@ def load_presets() -> dict[str, SvcModelPreset]:
             source_repo=str(raw.get("source_repo") or ""),
             source_url=str(raw.get("source_url") or ""),
             license=str(raw.get("license") or ""),
+            internal_test_only=bool(raw.get("internal_test_only")),
+            temporary_demo_reason=str(raw.get("temporary_demo_reason") or ""),
             install_report_path=str(raw.get("install_report_path") or ""),
             notes=str(raw.get("notes") or ""),
             transpose=int(raw.get("transpose", 0) or 0),

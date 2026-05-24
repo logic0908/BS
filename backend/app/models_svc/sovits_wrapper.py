@@ -129,6 +129,8 @@ class SoVitsRuntimeConfig:
     source_repo: str = ""
     source_url: str = ""
     license: str = ""
+    internal_test_only: bool = False
+    temporary_demo_reason: str = ""
     install_report_path: str = ""
     notes: str = ""
     model_path_basename: str = ""
@@ -178,6 +180,8 @@ class SoVitsRuntimeConfig:
             "source_repo": self.source_repo,
             "source_url": self.source_url,
             "license": self.license,
+            "internal_test_only": self.internal_test_only,
+            "temporary_demo_reason": self.temporary_demo_reason,
             "install_report_path": self.install_report_path,
             "notes": self.notes,
             "model_path_basename": self.model_path_basename or Path(self.model_path).name,
@@ -296,6 +300,8 @@ class SoVitsSvcEngine(VoiceConversionEngine):
                 "source_repo": runtime_config.source_repo,
                 "source_url": runtime_config.source_url,
                 "license": runtime_config.license,
+                "internal_test_only": runtime_config.internal_test_only,
+                "temporary_demo_reason": runtime_config.temporary_demo_reason,
                 "install_report_path": runtime_config.install_report_path,
                 "notes": runtime_config.notes,
                 "model_path_basename": runtime_config.model_path_basename or Path(runtime_config.model_path).name,
@@ -486,6 +492,10 @@ class SoVitsSvcEngine(VoiceConversionEngine):
             source_repo=str(model_metadata.get("source_repo") or preset.get("source_repo") or ""),
             source_url=str(model_metadata.get("source_url") or preset.get("source_url") or ""),
             license=str(model_metadata.get("license") or preset.get("license") or ""),
+            internal_test_only=bool(model_metadata.get("internal_test_only", preset.get("internal_test_only", False))),
+            temporary_demo_reason=str(
+                model_metadata.get("temporary_demo_reason") or preset.get("temporary_demo_reason") or ""
+            ),
             install_report_path=str(model_metadata.get("install_report_path") or preset.get("install_report_path") or ""),
             notes=str(model_metadata.get("notes") or preset.get("notes") or ""),
             model_path_basename=model_path_basename,
@@ -774,6 +784,8 @@ class SoVitsSvcEngine(VoiceConversionEngine):
             "source_repo": runtime_config.source_repo,
             "source_url": runtime_config.source_url,
             "license": runtime_config.license,
+            "internal_test_only": runtime_config.internal_test_only,
+            "temporary_demo_reason": runtime_config.temporary_demo_reason,
             "install_report_path": runtime_config.install_report_path,
             "notes": runtime_config.notes,
             "model_path_basename": runtime_config.model_path_basename or Path(runtime_config.model_path).name,

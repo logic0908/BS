@@ -37,6 +37,16 @@ REQUESTED_ADAPTER_MODE_ALIASES = {
 }
 
 
+def _resolve_project_path(path_value: str | os.PathLike[str] | None) -> str:
+    raw_path = str(path_value or "").strip()
+    if not raw_path:
+        return ""
+    candidate = Path(raw_path)
+    if candidate.is_absolute():
+        return str(candidate)
+    return str((PROJECT_ROOT / candidate).resolve())
+
+
 if nn is not None:
     class AdapterMLP(nn.Module):
         def __init__(self, input_dim: int, output_dim: int, hidden_dims: list[int] | tuple[int, ...] | None = None) -> None:
@@ -137,6 +147,7 @@ def load_style_adapter_config() -> dict[str, Any]:
     payload["adapter_checkpoint_path"] = str(
         os.environ.get("STYLE_ADAPTER_CHECKPOINT_PATH", str(payload.get("adapter_checkpoint_path") or DEFAULT_CHECKPOINT_PATH))
     )
+    payload["adapter_checkpoint_path"] = _resolve_project_path(payload.get("adapter_checkpoint_path"))
     payload["adapter_type"] = (
         "trained_mlp" if bool(payload.get("use_trained", True)) else str(payload.get("adapter_type") or "rule_based")
     )
@@ -339,7 +350,15 @@ class TextStyleAdapter:
             if isinstance(item, dict)
         }
         base_model_preset_id = str((selected_style or {}).get("model_preset_id") or "")
+        keep_base_preset = bool(
+            base_model_preset_id
+            and base_model_preset_id != "final_primary"
+            and bool((selected_style or {}).get("current_style_has_dedicated_model"))
+            and bool((selected_style or {}).get("model_preset_ready", True))
+        )
         predicted_preset_id = str(nearest_sample.get("model_preset_id") or base_model_preset_id or "final_primary")
+        if keep_base_preset:
+            predicted_preset_id = base_model_preset_id
         if ready_ids and predicted_preset_id not in ready_ids:
             predicted_preset_id = base_model_preset_id if base_model_preset_id in ready_ids else "final_primary"
 
