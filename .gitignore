@@ -48,9 +48,12 @@ frontend/node_modules/
 frontend/dist/
 frontend/.vite/
 frontend/.cache/
+.npm/
+.cache/
 
 # Runtime outputs and debug evidence
 runtime/
+backend/runtime/
 outputs/
 uploads/
 vocals/
@@ -67,7 +70,9 @@ backend/data/**
 !backend/data/.gitkeep
 
 # Third-party local dependency checkout and model assets
-local_models/
+local_models/**
+!local_models/
+!local_models/README.md
 so-vits-svc/
 StyleSinger/data/
 StyleSinger/checkpoints/
@@ -87,8 +92,6 @@ datasets/
 *.wav
 *.mp3
 *.flac
-*.png
-*.svg
 !backend/tests/fixtures/*.wav
 !backend/tests/fixtures/*.mp3
 !backend/tests/fixtures/*.flac
