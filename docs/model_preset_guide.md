@@ -2,6 +2,13 @@
 
 当前系统仍以歌声转换模型（So-VITS-SVC）为默认主链路，默认模型为 `final_primary / lain`。`v1.2` 已把 `final_male_youth / Nova_Adult` 与 `final_male_powerful / AY` 推进到“本地真实冒烟测试通过”的专用男声模型预设状态；其余模型预设仍按真实验证进度分别管理，而不是用回退机制伪装成“全风格都已接入”。
 
+## 临时演示模型说明
+
+- 当前仓库配置允许将 `active_preset_id` 临时切到 `final_male_powerful`，用于本地测试与毕业答辩演示时验证“低沉 / 磁性 / 厚重 / 男声”方向的展示效果。
+- `final_male_powerful` 虽已通过本地真实 smoke test，且 `speaker=AY`、模型文件与配置文件均已就绪，但其授权状态仍为 `license_unknown`。
+- 因此该 preset 只能按“本地测试 / 答辩演示 / 内部复核”口径使用，不应描述为可公开发布、可自由传播或授权边界已清晰的公开模型。
+- `final_primary` 仍保留为 baseline 预设，便于和临时演示模型做对照，也便于后续回退。
+
 ## 当前模型预设状态
 
 | preset_id | display_name | style_tags | is_configured | smoke_test_passed | source_repo | 说明 |

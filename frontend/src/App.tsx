@@ -477,7 +477,7 @@ function App() {
 
   const malePromptMismatchWarning =
     promptText.includes('男声') && metadata?.speaker === 'lain'
-      ? '当前提示词包含“男声”方向，但当前目标音色仍为“lain”。文本提示词只影响风格调制，不会自动切换目标音色；若需真正男声输出，需要接入男声模型预设或男声目标音色。'
+      ? `当前提示词包含“男声”方向，但当前目标音色仍为“${metadata?.speaker}”。文本提示词只影响风格调制，不会自动切换目标音色；若需真正男声输出，需要接入男声模型预设或男声目标音色。`
       : null
 
   return (
@@ -588,7 +588,7 @@ function App() {
               </div>
               <div className="char-count">
                 {modelSelectionMode === 'auto'
-                  ? '自动模式不会强制传 final_primary，后端会根据提示词命中 male_powerful / male_youth 等风格。'
+                  ? '自动模式不会强制传固定 baseline preset，后端会根据提示词命中 male_powerful / male_youth 等风格。'
                   : '手动模式会显式传 model_preset_id；演示对比时优先预置 final_male_powerful。'}
               </div>
 

@@ -387,7 +387,7 @@ describe('App compact localized dashboard', () => {
     expect((convertCall?.[1] as Record<string, unknown>)?.film_strength).toBe(0.35)
   })
 
-  it('默认自动模式不会强制传 final_primary，而是让后端按提示词选模型', async () => {
+  it('默认自动模式不会强制传固定 baseline preset，而是让后端按提示词选模型', async () => {
     mockedAxios.post.mockImplementation(async (url: string) => {
       if (url === '/api/v1/upload') return uploadOk
       if (url === '/api/v1/convert') return { data: { task_id: 'task-1' } }
@@ -711,7 +711,7 @@ describe('App compact localized dashboard', () => {
     expect(screen.getByText('适配器权重（adapter_checkpoint）')).toBeInTheDocument()
   })
 
-  it('prompt 包含男声且目标音色为 lain 时显示中文边界 warning', async () => {
+  it('prompt 包含男声且目标音色仍为当前 speaker 时显示中文边界 warning', async () => {
     await runSuccessFlow('清亮、少年感、男声')
 
     await waitFor(() => {
